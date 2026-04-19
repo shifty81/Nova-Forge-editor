@@ -142,9 +142,9 @@ fn apply_gravity(
     let new_dist = new_pos.length();
     if new_dist < 1.0 { return; }
 
-    let new_up   = new_pos / new_dist;
+    let new_up    = new_pos / new_dist;
     let terrain_r = terrain_radius_at(new_up, seed.0);
-    let feet_r    = terrain_r + 0.05;
+    let feet_r    = terrain_r + PLAYER_FOOT_CLEARANCE;
 
     if new_dist < feet_r {
         transform.translation = new_up * feet_r;

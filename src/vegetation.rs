@@ -58,25 +58,25 @@ fn spawn_vegetation_around_player(
 
         match biome {
             Biome::Forest | Biome::TropicalForest => {
-                if rng.gen_range(0.0f32..1.0) < TREE_SPAWN_CHANCE * 80.0 {
+                if rng.gen_range(0.0f32..1.0) < TREE_PROB_FOREST {
                     let pos = cand_dir * (surface_r + 0.5);
                     spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Broadleaf, &mut rng);
                 }
             }
             Biome::Plains | Biome::Savanna => {
-                if rng.gen_range(0.0f32..1.0) < TREE_SPAWN_CHANCE * 30.0 {
+                if rng.gen_range(0.0f32..1.0) < TREE_PROB_PLAINS {
                     let pos = cand_dir * (surface_r + 0.5);
                     spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Oak, &mut rng);
                 }
             }
             Biome::Desert => {
-                if rng.gen_range(0.0f32..1.0) < TREE_SPAWN_CHANCE * 10.0 {
+                if rng.gen_range(0.0f32..1.0) < TREE_PROB_DESERT {
                     let pos = cand_dir * (surface_r + 0.5);
                     spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Cactus, &mut rng);
                 }
             }
             Biome::Tundra => {
-                if rng.gen_range(0.0f32..1.0) < TREE_SPAWN_CHANCE * 8.0 {
+                if rng.gen_range(0.0f32..1.0) < TREE_PROB_TUNDRA {
                     let pos = cand_dir * (surface_r + 0.5);
                     spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Pine, &mut rng);
                 }

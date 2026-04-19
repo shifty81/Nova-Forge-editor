@@ -21,6 +21,11 @@ fn setup_solar_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Pre-compute the sun's orbit axis from the axial tilt constant.
+    // The orbit plane is tilted by AXIAL_TILT radians relative to the ecliptic,
+    // giving the planet its seasons.
+    let sun_orbit_axis = Vec3::new(0.0, AXIAL_TILT.cos(), AXIAL_TILT.sin()).normalize();
+
     // Sun
     commands.spawn((
         PbrBundle {
@@ -36,7 +41,7 @@ fn setup_solar_system(
         },
         Sun,
         OrbitalBody::new(SUN_DISTANCE, DAY_LENGTH_SECONDS, Vec3::ZERO)
-            .with_axis(Vec3::new(0.0, AXIAL_TILT.cos(), AXIAL_TILT.sin()).normalize()),
+            .with_axis(sun_orbit_axis),
         SelfRotation { axis: Vec3::Y, angular_speed: 0.04 },
         Name::new("Sun"),
     ));

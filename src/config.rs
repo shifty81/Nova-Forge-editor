@@ -129,3 +129,12 @@ pub const GRASS_SPAWN_CHANCE: f32 = 0.04;
 
 /// Radius around player in which vegetation is checked / spawned (metres).
 pub const VEGETATION_RADIUS: f32 = 80.0;
+
+/// Pre-computed per-biome tree-spawn probabilities (TREE_SPAWN_CHANCE × density factor).
+pub const TREE_PROB_FOREST:  f32 = TREE_SPAWN_CHANCE * 80.0;
+pub const TREE_PROB_PLAINS:  f32 = TREE_SPAWN_CHANCE * 30.0;
+pub const TREE_PROB_DESERT:  f32 = TREE_SPAWN_CHANCE * 10.0;
+pub const TREE_PROB_TUNDRA:  f32 = TREE_SPAWN_CHANCE *  8.0;
+
+/// Small clearance (metres) between the player's feet and the terrain surface.
+pub const PLAYER_FOOT_CLEARANCE: f32 = 0.05;

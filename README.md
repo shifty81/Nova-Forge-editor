@@ -55,7 +55,7 @@ Each biome determines:
 
 ## Building & Running
 
-**Requirements**: Rust 1.80+, a system with OpenGL/Vulkan/Metal support.
+**Requirements**: Rust **1.94 or newer** (verified with rustc 1.94.1; the pinned `constant_time_eq` 0.4.2 in `Cargo.lock` requires ≥ 1.65 but the rest of the dependency tree requires ≥ 1.94), plus a system with OpenGL/Vulkan/Metal support.
 
 ```bash
 # Debug build (faster compile, slower runtime)
