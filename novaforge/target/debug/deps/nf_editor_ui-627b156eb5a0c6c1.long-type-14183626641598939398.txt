@@ -1,1 +1,0 @@
-for<'a, 'b, 'c> fn(EguiContexts<'a, 'b>, bevy::prelude::EventWriter<'c, RequestEditorMode>) {draw_menu_bar}

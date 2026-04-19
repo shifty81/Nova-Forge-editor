@@ -1,1 +1,0 @@
-for<'a, 'b, 'c> fn(EguiContexts<'a, 'b>, bevy::prelude::Res<'c, AssetRegistry>) {draw_content_panel}

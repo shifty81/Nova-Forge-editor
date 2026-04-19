@@ -1,1 +1,0 @@
-for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h> fn(EguiContexts<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, std::option::Option<&'e EntityLabel>, std::option::Option<&'f bevy::prelude::Parent>)>, bevy::prelude::ResMut<'g, SelectionState>, bevy::prelude::EventWriter<'h, SelectionChanged>) {draw_outliner_panel}

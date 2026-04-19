@@ -1,1 +1,0 @@
-for<'a, 'b, 'c> fn(EguiContexts<'a, 'b>, bevy::prelude::Res<'c, OutputLog>) {draw_log_panel}
