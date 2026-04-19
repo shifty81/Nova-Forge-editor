@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 
+use crate::biome::Voxel;
 use crate::config::*;
 
 // ============================================================
@@ -36,6 +37,22 @@ pub struct PlayerCamera;
 pub struct VoxelChunk {
     pub position: IVec3,
 }
+
+/// Raw voxel data stored on every chunk entity so edits have something to
+/// mutate and undo commands can record old/new state.
+#[derive(Component)]
+pub struct VoxelData(pub Vec<Voxel>);
+
+/// Marks a chunk whose mesh is stale and needs to be rebuilt next frame.
+/// Set by the voxel editing tools and cleared by `remesh_dirty_chunks`.
+#[derive(Component)]
+pub struct ChunkDirty;
+
+/// Marks a chunk whose voxels were manually edited by the user.
+/// `handle_regen_world` skips these chunks so hand-crafted edits survive a
+/// world regeneration.
+#[derive(Component)]
+pub struct ManuallyEdited;
 
 /// A tree entity.
 #[derive(Component)]
@@ -156,9 +173,12 @@ impl Default for WorldTime {
 #[derive(Resource, Default)]
 pub struct ChunkManager {
     /// Map from chunk grid position to the corresponding entity.
-    pub loaded:  HashMap<IVec3, Entity>,
+    pub loaded:    HashMap<IVec3, Entity>,
     /// Queue of chunk positions waiting to be generated.
-    pub pending: VecDeque<IVec3>,
+    pub pending:   VecDeque<IVec3>,
+    /// Positions of chunks whose generation tasks are currently in flight.
+    /// Prevents duplicate task spawning.
+    pub in_flight: std::collections::HashSet<IVec3>,
 }
 
 /// Current weather state.
@@ -215,6 +235,28 @@ impl Default for NoiseSeed {
 pub struct WorldSettings {
     pub render_distance:       i32,
     pub max_chunks_per_frame:  usize,
+
+    // ── Terrain noise (changing these triggers a full regen) ────────────────
+    /// Noise frequency for the main terrain height map.
+    pub terrain_noise_scale:  f64,
+    /// Noise frequency for the moisture / biome map.
+    pub moisture_noise_scale: f64,
+    /// Maximum mountain height above sea level (metres).
+    pub max_terrain_height:   f32,
+    /// FBM octave count for the height map.
+    pub noise_octaves:        usize,
+    /// Lacunarity for both FBM generators.
+    pub noise_lacunarity:     f64,
+    /// Persistence for both FBM generators.
+    pub noise_persistence:    f64,
+
+    // ── Vegetation ──────────────────────────────────────────────────────────
+    /// Radius around the player in which vegetation is spawned/despawned (m).
+    pub vegetation_radius:  f32,
+    /// Base probability that a suitable voxel becomes a tree.
+    pub tree_spawn_chance:  f32,
+    /// Probability that a suitable voxel gets a grass blade.
+    pub grass_spawn_chance: f32,
 }
 
 impl Default for WorldSettings {
@@ -222,6 +264,15 @@ impl Default for WorldSettings {
         Self {
             render_distance:      RENDER_DISTANCE,
             max_chunks_per_frame: MAX_CHUNKS_PER_FRAME,
+            terrain_noise_scale:  TERRAIN_NOISE_SCALE,
+            moisture_noise_scale: MOISTURE_NOISE_SCALE,
+            max_terrain_height:   MAX_TERRAIN_HEIGHT,
+            noise_octaves:        8,
+            noise_lacunarity:     2.0,
+            noise_persistence:    0.5,
+            vegetation_radius:    VEGETATION_RADIUS,
+            tree_spawn_chance:    TREE_SPAWN_CHANCE,
+            grass_spawn_chance:   GRASS_SPAWN_CHANCE,
         }
     }
 }

@@ -5,8 +5,15 @@
 //! * **E** — Rotate mode
 //! * **R** — Scale mode
 //! * **G** — Toggle editor grid
+//!
+//! # Interactive drag
+//! Left-click and drag within ~18 px of a gizmo axis arrow to translate the
+//! focused entity along that axis.  A [`TransformMovedEvent`] is emitted on
+//! drag-end so the command history can record the move for undo/redo.
 
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use nf_commands::TransformMovedEvent;
 use nf_editor_core::{EditorCamera, EditorMode};
 use nf_selection::FocusedEntity;
 
@@ -90,6 +97,29 @@ impl Default for GridSettings {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Gizmo interaction state (for drag)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Tracks an in-progress gizmo axis drag.
+#[derive(Resource, Default)]
+pub struct GizmoInteraction {
+    /// True while a drag is in progress.
+    pub active: bool,
+    /// Which axis is being dragged (0=X, 1=Y, 2=Z).
+    pub axis: usize,
+    /// Entity being dragged.
+    pub entity: Option<Entity>,
+    /// Transform of the entity at drag start (for undo).
+    pub start_transform: Option<Transform>,
+    /// Cursor position in logical pixels at drag start.
+    pub drag_start_pos: Vec2,
+    /// Screen-space direction of the grabbed axis (normalised pixels).
+    pub screen_axis_dir: Vec2,
+    /// Pixels per world-unit along the axis (for scaling delta).
+    pub pixels_per_unit: f32,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Plugin
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -102,10 +132,12 @@ impl Plugin for GizmosPlugin {
             .init_resource::<GizmoSpace>()
             .init_resource::<SnapSettings>()
             .init_resource::<GridSettings>()
+            .init_resource::<GizmoInteraction>()
             .add_systems(
                 Update,
                 (
                     handle_gizmo_hotkeys,
+                    handle_gizmo_drag,
                     draw_selection_gizmo,
                     draw_editor_grid,
                 )
@@ -132,6 +164,108 @@ fn handle_gizmo_hotkeys(
     }
     // G toggles the grid in all cases.
     if keyboard.just_pressed(KeyCode::KeyG) { grid.visible = !grid.visible; }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Interactive drag — translate along world-space axes
+// ────────────────────────────────────────────────────────────────────────────
+
+const GIZMO_AXIS_LEN: f32 = 3.5;
+const GIZMO_HIT_PIXELS: f32 = 18.0;
+
+fn handle_gizmo_drag(
+    buttons:       Res<ButtonInput<MouseButton>>,
+    windows:       Query<&Window, With<PrimaryWindow>>,
+    camera_q:      Query<(&Camera, &GlobalTransform), With<EditorCamera>>,
+    focused:       Res<FocusedEntity>,
+    mut transforms: Query<&mut Transform>,
+    mut interaction: ResMut<GizmoInteraction>,
+    snap:          Res<SnapSettings>,
+    gizmo_mode:    Res<GizmoMode>,
+    mut moved_ev:  EventWriter<TransformMovedEvent>,
+) {
+    let Ok(window) = windows.get_single() else { return };
+    let Ok((camera, cam_tf)) = camera_q.get_single() else { return };
+    let Some(cursor) = window.cursor_position() else { return };
+
+    // Only drag in Translate mode.
+    if *gizmo_mode != GizmoMode::Translate { return; }
+
+    // ── End drag ─────────────────────────────────────────────────────────────
+    if interaction.active && buttons.just_released(MouseButton::Left) {
+        if let (Some(entity), Some(start_tf)) = (interaction.entity, interaction.start_transform) {
+            if let Ok(current_tf) = transforms.get(entity) {
+                if *current_tf != start_tf {
+                    moved_ev.send(TransformMovedEvent {
+                        entity,
+                        before: start_tf,
+                        after: *current_tf,
+                    });
+                }
+            }
+        }
+        *interaction = GizmoInteraction::default();
+        return;
+    }
+
+    // ── Continue drag ─────────────────────────────────────────────────────────
+    if interaction.active && buttons.pressed(MouseButton::Left) {
+        if let Some(entity) = interaction.entity {
+            if let Ok(mut tf) = transforms.get_mut(entity) {
+                let cursor_delta = cursor - interaction.drag_start_pos;
+                let mag = cursor_delta.dot(interaction.screen_axis_dir);
+                if interaction.pixels_per_unit.abs() > 0.001 {
+                    let world_delta = mag / interaction.pixels_per_unit;
+                    let mut snapped = world_delta;
+                    if snap.translate_enabled {
+                        let s = snap.translate_snap;
+                        snapped = (world_delta / s).round() * s;
+                    }
+                    let start = interaction.start_transform.unwrap();
+                    let axis = [Vec3::X, Vec3::Y, Vec3::Z][interaction.axis];
+                    tf.translation = start.translation + axis * snapped;
+                }
+            }
+        }
+        return;
+    }
+
+    // ── Begin drag on LMB press ───────────────────────────────────────────────
+    if !buttons.just_pressed(MouseButton::Left) { return; }
+    let Some(entity) = focused.0 else { return };
+    let Ok(tf) = transforms.get(entity) else { return };
+
+    let origin = tf.translation;
+    let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+
+    for (i, &axis) in axes.iter().enumerate() {
+        let tip = origin + axis * GIZMO_AXIS_LEN;
+        let Some(screen_origin) = camera.world_to_viewport(cam_tf, origin) else { continue };
+        let Some(screen_tip)    = camera.world_to_viewport(cam_tf, tip)    else { continue };
+
+        let seg = screen_tip - screen_origin;
+        let seg_len = seg.length();
+        if seg_len < 1.0 { continue; }
+
+        // Distance from cursor to the axis line segment.
+        let t = ((cursor - screen_origin).dot(seg) / (seg_len * seg_len)).clamp(0.0, 1.0);
+        let closest = screen_origin + seg * t;
+        let dist = (cursor - closest).length();
+
+        if dist <= GIZMO_HIT_PIXELS {
+            let screen_dir = seg / seg_len;
+            *interaction = GizmoInteraction {
+                active:          true,
+                axis:            i,
+                entity:          Some(entity),
+                start_transform: Some(*tf),
+                drag_start_pos:  cursor,
+                screen_axis_dir: screen_dir,
+                pixels_per_unit: seg_len / GIZMO_AXIS_LEN,
+            };
+            break;
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -165,11 +299,23 @@ fn draw_selection_gizmo(
     );
 
     // Draw RGB axis arrows from the entity origin.
-    let len    = 3.5_f32;
+    // In Local mode the axes follow the entity's rotation; in World mode they
+    // always point along the world X/Y/Z axes.
+    let len    = GIZMO_AXIS_LEN;
     let origin = tf.translation;
-    gizmos.line(origin, origin + tf.rotation * Vec3::X * len, Color::srgb(1.0, 0.15, 0.15));
-    gizmos.line(origin, origin + tf.rotation * Vec3::Y * len, Color::srgb(0.15, 1.0, 0.15));
-    gizmos.line(origin, origin + tf.rotation * Vec3::Z * len, Color::srgb(0.15, 0.15, 1.0));
+    let (ax, ay, az) = match *mode {
+        GizmoMode::Translate => (
+            tf.rotation * Vec3::X,
+            tf.rotation * Vec3::Y,
+            tf.rotation * Vec3::Z,
+        ),
+        // Rotate / Scale always show world-space axes so the interaction
+        // arrows are easy to read regardless of entity orientation.
+        _ => (Vec3::X, Vec3::Y, Vec3::Z),
+    };
+    gizmos.line(origin, origin + ax * len, Color::srgb(1.0, 0.15, 0.15));
+    gizmos.line(origin, origin + ay * len, Color::srgb(0.15, 1.0, 0.15));
+    gizmos.line(origin, origin + az * len, Color::srgb(0.15, 0.15, 1.0));
 }
 
 // ────────────────────────────────────────────────────────────────────────────

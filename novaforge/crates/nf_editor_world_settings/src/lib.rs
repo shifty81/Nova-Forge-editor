@@ -2,25 +2,23 @@
 //! planet configuration.
 //!
 //! Shows:
-//! * **Terrain** — read-only planet constants + editable `NoiseSeed`
+//! * **Terrain** — editable noise seed + all runtime terrain noise parameters
 //! * **Chunks** — `render_distance`, `max_chunks_per_frame`, live loaded count
 //! * **Day/Night** — `day_fraction` slider, `total_days` readout
 //! * **Weather** — current kind dropdown, intensity slider
-//! * **Vegetation** — read-only spawn-chance and radius constants
+//! * **Vegetation** — runtime spawn-chance and radius controls
 //! * **Player** — read-only speed/gravity constants
 //!
 //! A "Regenerate World" button sends [`RegenerateWorld`] to despawn all chunks
-//! and restart generation with the current [`NoiseSeed`].
+//! and restart generation with the current noise parameters.
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use nf_editor_core::EditorMode;
 use nf_voxel_planet::{
     ChunkManager, NoiseSeed, RegenerateWorld, WeatherKind, WeatherState, WorldSettings, WorldTime,
-    AXIAL_TILT, DAY_LENGTH_SECONDS, FOG_END, FOG_START, GRASS_SPAWN_CHANCE, GRAVITY_STRENGTH,
-    MAX_TERRAIN_HEIGHT, MOISTURE_NOISE_SCALE, PLANET_RADIUS, PLAYER_EYE_HEIGHT,
-    PLAYER_JUMP_SPEED, PLAYER_RUN_SPEED, PLAYER_WALK_SPEED, TERRAIN_NOISE_SCALE,
-    TREE_SPAWN_CHANCE, VEGETATION_RADIUS,
+    DAY_LENGTH_SECONDS, FOG_END, FOG_START, GRAVITY_STRENGTH, PLANET_RADIUS,
+    PLAYER_EYE_HEIGHT, PLAYER_JUMP_SPEED, PLAYER_RUN_SPEED, PLAYER_WALK_SPEED,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,9 +54,10 @@ fn draw_world_settings_panel(
     let ctx = contexts.ctx_mut();
 
     egui::Window::new("🌍 World Settings")
-        .default_width(300.0)
+        .default_width(320.0)
         .resizable(true)
         .show(ctx, |ui| {
+
             // ── Terrain ──────────────────────────────────────────────────────
             egui::CollapsingHeader::new("⛰  Terrain")
                 .default_open(true)
@@ -71,20 +70,56 @@ fn draw_world_settings_panel(
                             ui.label(format!("{PLANET_RADIUS:.0} m"));
                             ui.end_row();
 
-                            ui.label("Max Height");
-                            ui.label(format!("{MAX_TERRAIN_HEIGHT:.0} m"));
+                            ui.label("Noise Seed");
+                            ui.add(egui::DragValue::new(&mut seed.0).speed(1.0));
+                            ui.end_row();
+
+                            ui.label("Max Height (m)");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.max_terrain_height)
+                                    .speed(10.0)
+                                    .range(50.0..=5000.0),
+                            );
                             ui.end_row();
 
                             ui.label("Terrain Noise Scale");
-                            ui.label(format!("{TERRAIN_NOISE_SCALE:.2}"));
+                            ui.add(
+                                egui::DragValue::new(&mut settings.terrain_noise_scale)
+                                    .speed(0.05)
+                                    .range(0.1..=10.0),
+                            );
                             ui.end_row();
 
                             ui.label("Moisture Noise Scale");
-                            ui.label(format!("{MOISTURE_NOISE_SCALE:.2}"));
+                            ui.add(
+                                egui::DragValue::new(&mut settings.moisture_noise_scale)
+                                    .speed(0.05)
+                                    .range(0.1..=10.0),
+                            );
                             ui.end_row();
 
-                            ui.label("Noise Seed");
-                            ui.add(egui::DragValue::new(&mut seed.0).speed(1.0));
+                            ui.label("Noise Octaves");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.noise_octaves)
+                                    .speed(1.0)
+                                    .range(1..=12),
+                            );
+                            ui.end_row();
+
+                            ui.label("Lacunarity");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.noise_lacunarity)
+                                    .speed(0.05)
+                                    .range(1.0..=4.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("Persistence");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.noise_persistence)
+                                    .speed(0.02)
+                                    .range(0.1..=0.9),
+                            );
                             ui.end_row();
                         });
 
@@ -150,10 +185,6 @@ fn draw_world_settings_panel(
                             ui.label(format!("{DAY_LENGTH_SECONDS:.0} s"));
                             ui.end_row();
 
-                            ui.label("Axial Tilt");
-                            ui.label(format!("{:.1}°", AXIAL_TILT.to_degrees()));
-                            ui.end_row();
-
                             ui.label("Day Fraction");
                             ui.add(
                                 egui::Slider::new(&mut world_time.day_fraction, 0.0..=1.0)
@@ -217,16 +248,28 @@ fn draw_world_settings_panel(
                         .num_columns(2)
                         .spacing([8.0, 4.0])
                         .show(ui, |ui| {
-                            ui.label("Spawn Radius");
-                            ui.label(format!("{VEGETATION_RADIUS:.0} m"));
+                            ui.label("Spawn Radius (m)");
+                            ui.add(
+                                egui::DragValue::new(&mut settings.vegetation_radius)
+                                    .speed(1.0)
+                                    .range(10.0..=400.0),
+                            );
                             ui.end_row();
 
                             ui.label("Tree Chance");
-                            ui.label(format!("{TREE_SPAWN_CHANCE:.4}"));
+                            ui.add(
+                                egui::DragValue::new(&mut settings.tree_spawn_chance)
+                                    .speed(0.001)
+                                    .range(0.0..=0.5),
+                            );
                             ui.end_row();
 
                             ui.label("Grass Chance");
-                            ui.label(format!("{GRASS_SPAWN_CHANCE:.4}"));
+                            ui.add(
+                                egui::DragValue::new(&mut settings.grass_spawn_chance)
+                                    .speed(0.001)
+                                    .range(0.0..=0.5),
+                            );
                             ui.end_row();
                         });
                 });
@@ -282,3 +325,4 @@ fn weather_label(kind: &WeatherKind) -> &'static str {
         WeatherKind::Storm  => "Storm",
     }
 }
+

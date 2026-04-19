@@ -17,15 +17,17 @@ pub mod planet;
 pub mod player;
 pub mod solar_system;
 pub mod vegetation;
+pub mod world_io;
 
 pub use atmosphere::AtmospherePlugin;
 pub use biome::{classify_biome, Biome, Voxel};
 pub use components::*;
 pub use config::*;
-pub use planet::{terrain_radius_at, NoiseCache, PlanetPlugin};
+pub use planet::{terrain_radius_at, chunk_voxel_index, build_chunk_mesh, NoiseCache, PlanetPlugin};
 pub use player::{update_chunk_viewpoint_from_player, PlayerPlugin};
 pub use solar_system::SolarSystemPlugin;
 pub use vegetation::VegetationPlugin;
+pub use world_io::{SaveWorldRequest, LoadWorldRequest, WorldIoPlugin};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Plugin group
@@ -43,6 +45,7 @@ impl PluginGroup for VoxelPlanetPlugins {
             .add(planet::PlanetPlugin)
             .add(atmosphere::AtmospherePlugin)
             .add(vegetation::VegetationPlugin)
+            .add(world_io::WorldIoPlugin)
     }
 }
 

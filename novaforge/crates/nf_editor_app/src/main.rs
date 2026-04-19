@@ -6,6 +6,7 @@
 //! is only active during Play-In-Editor sessions.
 
 use bevy::diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 
 // ── Voxel planet engine ──────────────────────────────────────────────────────
@@ -32,17 +33,24 @@ use nf_editor_scene::EditorScenePlugin;
 use nf_editor_ui::EditorUiPlugin;
 use nf_editor_viewport::EditorViewportPlugin;
 use nf_editor_world_settings::EditorWorldSettingsPlugin;
+use nf_editor_voxel_tools::VoxelToolsPlugin;
 
 fn main() {
     App::new()
         // ── Host window ──────────────────────────────────────────────────────
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "NovaForge Editor — Voxel Planet".into(),
+        .add_plugins(DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "NovaForge Editor — Voxel Planet".into(),
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        }))
+            })
+            .set(LogPlugin {
+                custom_layer: nf_editor_log::build_editor_log_layer,
+                ..default()
+            })
+        )
 
         // ── Diagnostics ──────────────────────────────────────────────────────
         .add_plugins((
@@ -77,6 +85,7 @@ fn main() {
             EditorLogPlugin,
             EditorProjectPlugin,
             EditorWorldSettingsPlugin,
+            VoxelToolsPlugin,
         ))
 
         .run();
