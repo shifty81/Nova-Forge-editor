@@ -12,7 +12,7 @@ use nf_editor_play::{StartPie, StopPie, PausePie};
 use nf_editor_viewport::TeleportEditorCamera;
 use nf_commands::{UndoRequested, RedoRequested, CommandHistory};
 use nf_voxel_planet::{SaveWorldRequest, LoadWorldRequest};
-use nf_gizmos::SnapSettings;
+use nf_gizmos::{GizmoSpace, SnapSettings};
 use nf_selection::FocusedEntity;
 use nf_scene::{ActiveScenePath, SceneDirty};
 
@@ -352,9 +352,10 @@ fn draw_menu_bar(
 // ────────────────────────────────────────────────────────────────────────────
 
 fn draw_snap_toolbar(
-    mut contexts: EguiContexts,
-    mut snap:     ResMut<SnapSettings>,
-    mode:         Res<State<EditorMode>>,
+    mut contexts:  EguiContexts,
+    mut snap:      ResMut<SnapSettings>,
+    mut space:     ResMut<GizmoSpace>,
+    mode:          Res<State<EditorMode>>,
 ) {
     if *mode.get() != EditorMode::Editing {
         return;
@@ -366,6 +367,19 @@ fn draw_snap_toolbar(
         .exact_height(28.0)
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
+                // ── Gizmo space ───────────────────────────────────────────
+                let space_label = match *space {
+                    GizmoSpace::World => "🌐 World",
+                    GizmoSpace::Local => "📦 Local",
+                };
+                if ui.small_button(space_label).clicked() {
+                    *space = match *space {
+                        GizmoSpace::World => GizmoSpace::Local,
+                        GizmoSpace::Local => GizmoSpace::World,
+                    };
+                }
+
+                ui.separator();
                 ui.label(egui::RichText::new("Snap:").weak().small());
 
                 // ── Translate ─────────────────────────────────────────────

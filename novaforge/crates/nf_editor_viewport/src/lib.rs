@@ -16,9 +16,9 @@ use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts};
-use nf_editor_core::{EditorCamera, EditorMode};
+use nf_editor_core::{EditorCamera, EditorMode, EntityLabel};
 use nf_gizmos::{GizmoInteraction, GizmoMode};
-use nf_selection::FocusedEntity;
+use nf_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 use nf_voxel_planet::{ChunkManager, ChunkViewpoint, VoxelChunk, CHUNK_SIZE, PLANET_RADIUS, SUN_DISTANCE, VOXEL_SIZE};
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -231,15 +231,22 @@ fn update_editor_camera(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// On LMB click (when not dragging a gizmo), cast a ray from the editor camera
-/// through the cursor and select the nearest intersecting voxel chunk.
+/// through the cursor.  Hits are tested against:
+/// 1. User-spawned entities with [`EntityLabel`] — sphere AABB around origin.
+/// 2. Voxel chunk AABBs.
+/// The nearest hit is focused; Ctrl is NOT available here (viewport is single-select).
 fn viewport_mouse_pick(
     buttons:      Res<ButtonInput<MouseButton>>,
+    keyboard:     Res<ButtonInput<KeyCode>>,
     windows:      Query<&Window, With<PrimaryWindow>>,
     camera_q:     Query<(&Camera, &GlobalTransform), With<EditorCamera>>,
     chunk_mgr:    Res<ChunkManager>,
     chunk_q:      Query<&VoxelChunk>,
+    user_q:       Query<(Entity, &GlobalTransform), With<EntityLabel>>,
     interaction:  Res<GizmoInteraction>,
     mut focused:  ResMut<FocusedEntity>,
+    mut selected: ResMut<SelectedEntities>,
+    mut changed:  EventWriter<SelectionChanged>,
 ) {
     // Skip if a gizmo drag is active or no LMB click.
     if interaction.active { return; }
@@ -258,12 +265,24 @@ fn viewport_mouse_pick(
     let mut best_dist = f32::MAX;
     let mut best_ent  = None::<Entity>;
 
+    // ── User entities (EntityLabel) — sphere test ────────────────────────────
+    for (entity, gtf) in &user_q {
+        let center = gtf.translation();
+        // Approximate bounding sphere: radius 0.7 m (covers a unit cube).
+        let radius = 0.7_f32;
+        if let Some(dist) = ray_sphere(ray_origin, ray_dir, center, radius) {
+            if dist < best_dist {
+                best_dist = dist;
+                best_ent  = Some(entity);
+            }
+        }
+    }
+
+    // ── Voxel chunks ─────────────────────────────────────────────────────────
     for (&coord, &entity) in &chunk_mgr.loaded {
         if entity == Entity::PLACEHOLDER { continue; }
-        // Verify the entity still exists in the chunk query.
         if chunk_q.get(entity).is_err() { continue; }
 
-        // Compute chunk AABB.
         let min = Vec3::new(coord.x as f32, coord.y as f32, coord.z as f32) * cs;
         let max = min + Vec3::splat(cs);
 
@@ -276,14 +295,21 @@ fn viewport_mouse_pick(
     }
 
     if let Some(ent) = best_ent {
-        focused.0 = Some(ent);
+        let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        if ctrl {
+            selected.toggle(ent);
+            if focused.0.is_none() { focused.0 = Some(ent); }
+        } else {
+            selected.set_single(ent);
+            focused.0 = Some(ent);
+        }
+        changed.send(SelectionChanged);
     }
 }
 
 /// Slab method AABB–ray intersection.  Returns the entry distance along the
 /// ray if there is an intersection with t > 0, otherwise `None`.
-fn ray_aabb(origin: Vec3, dir: Vec3, aabb_min: Vec3, aabb_max: Vec3) -> Option<f32> {
-    let inv_dir = Vec3::new(
+fn ray_aabb(origin: Vec3, dir: Vec3, aabb_min: Vec3, aabb_max: Vec3) -> Option<f32> {    let inv_dir = Vec3::new(
         if dir.x.abs() > 1e-10 { 1.0 / dir.x } else { f32::MAX },
         if dir.y.abs() > 1e-10 { 1.0 / dir.y } else { f32::MAX },
         if dir.z.abs() > 1e-10 { 1.0 / dir.z } else { f32::MAX },
@@ -376,4 +402,19 @@ fn draw_viewport_panel(
             );
         }
     });
+}
+
+/// Sphere–ray intersection.  Returns the entry distance along the ray
+/// if the ray hits the sphere with t > 0, otherwise `None`.
+fn ray_sphere(origin: Vec3, dir: Vec3, center: Vec3, radius: f32) -> Option<f32> {
+    let oc  = origin - center;
+    let b   = oc.dot(dir);
+    let c   = oc.dot(oc) - radius * radius;
+    let disc = b * b - c;
+    if disc < 0.0 { return None; }
+    let sqrt_disc = disc.sqrt();
+    let t0 = -b - sqrt_disc;
+    let t1 = -b + sqrt_disc;
+    let t = if t0 > 0.0 { t0 } else if t1 > 0.0 { t1 } else { return None; };
+    Some(t)
 }
