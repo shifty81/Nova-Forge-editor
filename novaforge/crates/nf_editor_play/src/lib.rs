@@ -8,8 +8,10 @@
 //! `run_if(in_state(EditorMode::PlayingInEditor))` so they are harmless while
 //! no Player entity exists.
 
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::CursorGrabMode;
+use bevy_egui::{egui, EguiContexts};
 use nf_editor_core::{EditorCamera, EditorMode, RequestEditorMode};
 use nf_voxel_planet::{
     player::{
@@ -17,7 +19,7 @@ use nf_voxel_planet::{
         spawn_voxel_player, toggle_cursor, update_camera_pitch,
         update_chunk_viewpoint_from_player,
     },
-    NoiseSeed, Player,
+    NoiseSeed, Player, PlayerState, PLANET_RADIUS,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -51,6 +53,9 @@ pub struct EditorPlayPlugin;
 
 impl Plugin for EditorPlayPlugin {
     fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<bevy_egui::EguiPlugin>() {
+            app.add_plugins(bevy_egui::EguiPlugin);
+        }
         app
             .init_resource::<PieState>()
             .add_event::<StartPie>()
@@ -72,7 +77,93 @@ impl Plugin for EditorPlayPlugin {
                     .chain()
                     .run_if(in_state(EditorMode::PlayingInEditor)),
             )
+            .add_systems(
+                Update,
+                draw_pie_hud.run_if(in_state(EditorMode::PlayingInEditor)),
+            )
             .add_systems(Update, (handle_start, handle_stop, handle_pause));
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PIE heads-up display
+// ────────────────────────────────────────────────────────────────────────────
+
+fn draw_pie_hud(
+    mut contexts: EguiContexts,
+    player_q:     Query<(&Transform, &PlayerState), With<Player>>,
+    diagnostics:  Res<DiagnosticsStore>,
+) {
+    let ctx = contexts.ctx_mut();
+
+    // ── Top-left mode banner ─────────────────────────────────────────────────
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("▶  PIE ACTIVE")
+                    .color(egui::Color32::from_rgb(80, 220, 80))
+                    .strong(),
+            );
+
+            if let Some(fps) = diagnostics
+                .get(&FrameTimeDiagnosticsPlugin::FPS)
+                .and_then(|d| d.smoothed())
+            {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("{fps:.1} FPS"))
+                        .color(egui::Color32::from_rgb(120, 220, 120)),
+                );
+            }
+
+            ui.separator();
+            ui.label(
+                egui::RichText::new("Esc: release cursor · Shift: sprint · Space: jump")
+                    .weak()
+                    .small(),
+            );
+        });
+    });
+
+    // ── Bottom-right player status ───────────────────────────────────────────
+    if let Ok((tf, state)) = player_q.get_single() {
+        let pos    = tf.translation;
+        let dist   = pos.length();
+        let alt_m  = dist - PLANET_RADIUS;
+        let speed  = state.velocity.length();
+        let ground = if state.is_grounded { "grounded" } else { "airborne" };
+
+        egui::Window::new("Player")
+            .title_bar(false)
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-10.0, -10.0])
+            .resizable(false)
+            .frame(egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(8.0)))
+            .show(ctx, |ui| {
+                egui::Grid::new("pie_player_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 2.0])
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("Pos").weak());
+                        ui.label(format!("({:.0}, {:.0}, {:.0})", pos.x, pos.y, pos.z));
+                        ui.end_row();
+
+                        ui.label(egui::RichText::new("Altitude").weak());
+                        ui.label(format!(
+                            "{}{:.1} m",
+                            if alt_m < 0.0 { "-" } else { "+" },
+                            alt_m.abs()
+                        ));
+                        ui.end_row();
+
+                        ui.label(egui::RichText::new("Speed").weak());
+                        ui.label(format!("{speed:.1} m/s"));
+                        ui.end_row();
+
+                        ui.label(egui::RichText::new("State").weak());
+                        ui.label(ground);
+                        ui.end_row();
+                    });
+            });
     }
 }
 
