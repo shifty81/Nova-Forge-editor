@@ -1,13 +1,15 @@
-//! `nf_editor_ui` — egui shell: main menu bar, toolbar, and docking layout.
+//! `nf_editor_ui` — egui shell: main menu bar, snap toolbar, docking layout,
+//! and floating utility windows (undo history).
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
-use nf_editor_core::{EditorMode, RequestEditorMode};
+use nf_editor_core::{EditorMode, PrimitiveKind, RequestEditorMode, SpawnEntityRequest};
 use nf_editor_scene::{NewSceneRequest, OpenSceneRequest, SaveSceneRequest};
 use nf_editor_play::{StartPie, StopPie, PausePie};
 use nf_editor_viewport::TeleportEditorCamera;
 use nf_commands::{UndoRequested, RedoRequested, CommandHistory};
 use nf_voxel_planet::{SaveWorldRequest, LoadWorldRequest};
+use nf_gizmos::SnapSettings;
 
 /// Default path used when saving the voxel world data.
 const DEFAULT_WORLD_SAVE_PATH: &str = "world.voxelworld";
@@ -15,7 +17,26 @@ const DEFAULT_WORLD_SAVE_PATH: &str = "world.voxelworld";
 /// Placeholder path used when no file dialog is available yet.
 const OPEN_SCENE_PLACEHOLDER: &str = "project/Scenes/untitled.nfscene";
 
+// ────────────────────────────────────────────────────────────────────────────
+// Shared UI state (refreshed each frame before the menu bar is drawn)
+// ────────────────────────────────────────────────────────────────────────────
 
+/// Lightweight per-frame cache for values read from other crates' resources.
+/// Keeping this out of the menu-bar system parameters keeps that system within
+/// Bevy's 16-parameter limit.
+#[derive(Resource, Default)]
+struct EditorUiState {
+    /// Label of the command on top of the undo stack (None = empty stack).
+    undo_label: Option<String>,
+    /// Label of the command on top of the redo stack (None = empty stack).
+    redo_label: Option<String>,
+    /// Whether the floating Undo History window is currently shown.
+    undo_history_visible: bool,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Plugin
+// ────────────────────────────────────────────────────────────────────────────
 
 pub struct EditorUiPlugin;
 
@@ -24,7 +45,19 @@ impl Plugin for EditorUiPlugin {
         if !app.is_plugin_added::<EguiPlugin>() {
             app.add_plugins(EguiPlugin);
         }
-        app.add_systems(Update, (keyboard_shortcuts, draw_menu_bar).chain());
+        app
+            .init_resource::<EditorUiState>()
+            .add_systems(
+                Update,
+                (
+                    keyboard_shortcuts,
+                    sync_ui_state,
+                    draw_menu_bar,
+                    draw_snap_toolbar,
+                    draw_undo_history_window,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -33,42 +66,55 @@ impl Plugin for EditorUiPlugin {
 // ────────────────────────────────────────────────────────────────────────────
 
 fn keyboard_shortcuts(
-    keys:       Res<ButtonInput<KeyCode>>,
+    keys:        Res<ButtonInput<KeyCode>>,
     mut undo_ev: EventWriter<UndoRequested>,
     mut redo_ev: EventWriter<RedoRequested>,
 ) {
-    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let ctrl  = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let shift = keys.any_pressed([KeyCode::ShiftLeft,   KeyCode::ShiftRight]);
 
     if ctrl && !shift && keys.just_pressed(KeyCode::KeyZ) {
         undo_ev.send(UndoRequested);
     }
-    // Ctrl+Y or Ctrl+Shift+Z for redo
+    // Ctrl+Y or Ctrl+Shift+Z for redo.
     if ctrl && (keys.just_pressed(KeyCode::KeyY) || (shift && keys.just_pressed(KeyCode::KeyZ))) {
         redo_ev.send(RedoRequested);
     }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Menu bar
+// UI state sync (runs before draw_menu_bar)
+// ────────────────────────────────────────────────────────────────────────────
+
+fn sync_ui_state(
+    history:  Res<CommandHistory>,
+    mut state: ResMut<EditorUiState>,
+) {
+    state.undo_label = history.undo_label().map(str::to_owned);
+    state.redo_label = history.redo_label().map(str::to_owned);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Main menu bar  (exactly 16 system parameters)
 // ────────────────────────────────────────────────────────────────────────────
 
 fn draw_menu_bar(
-    mut contexts:     EguiContexts,
-    mut mode_ev:      EventWriter<RequestEditorMode>,
-    mode:             Res<State<EditorMode>>,
-    mut new_ev:       EventWriter<NewSceneRequest>,
-    mut open_ev:      EventWriter<OpenSceneRequest>,
-    mut save_ev:      EventWriter<SaveSceneRequest>,
-    mut undo_ev:      EventWriter<UndoRequested>,
-    mut redo_ev:      EventWriter<RedoRequested>,
-    mut start_ev:     EventWriter<StartPie>,
-    mut stop_ev:      EventWriter<StopPie>,
-    mut pause_ev:     EventWriter<PausePie>,
-    mut teleport_ev:  EventWriter<TeleportEditorCamera>,
+    mut contexts:      EguiContexts,
+    mut mode_ev:       EventWriter<RequestEditorMode>,
+    mode:              Res<State<EditorMode>>,
+    mut new_ev:        EventWriter<NewSceneRequest>,
+    mut open_ev:       EventWriter<OpenSceneRequest>,
+    mut save_ev:       EventWriter<SaveSceneRequest>,
+    mut undo_ev:       EventWriter<UndoRequested>,
+    mut redo_ev:       EventWriter<RedoRequested>,
+    mut start_ev:      EventWriter<StartPie>,
+    mut stop_ev:       EventWriter<StopPie>,
+    mut pause_ev:      EventWriter<PausePie>,
+    mut teleport_ev:   EventWriter<TeleportEditorCamera>,
     mut save_world_ev: EventWriter<SaveWorldRequest>,
     mut load_world_ev: EventWriter<LoadWorldRequest>,
-    history:          Res<CommandHistory>,
+    mut spawn_ev:      EventWriter<SpawnEntityRequest>,
+    mut ui_state:      ResMut<EditorUiState>,
 ) {
     let ctx = contexts.ctx_mut();
     let current_mode = *mode.get();
@@ -82,7 +128,6 @@ fn draw_menu_bar(
                     ui.close_menu();
                 }
                 if ui.button("Open Scene…").clicked() {
-                    // Placeholder: real file dialog added in Phase 3.
                     open_ev.send(OpenSceneRequest(OPEN_SCENE_PLACEHOLDER.into()));
                     ui.close_menu();
                 }
@@ -107,24 +152,24 @@ fn draw_menu_bar(
 
             // ── Edit ─────────────────────────────────────────────────────
             ui.menu_button("Edit", |ui| {
-                let undo_label = history
-                    .undo_label()
-                    .map(|l| format!("Undo \"{l}\""))
-                    .unwrap_or_else(|| "Undo".into());
-                let redo_label = history
-                    .redo_label()
-                    .map(|l| format!("Redo \"{l}\""))
-                    .unwrap_or_else(|| "Redo".into());
+                let undo_str = ui_state.undo_label
+                    .as_deref()
+                    .map(|l| format!("Undo \"{l}\"  Ctrl+Z"))
+                    .unwrap_or_else(|| "Undo  Ctrl+Z".into());
+                let redo_str = ui_state.redo_label
+                    .as_deref()
+                    .map(|l| format!("Redo \"{l}\"  Ctrl+Y"))
+                    .unwrap_or_else(|| "Redo  Ctrl+Y".into());
 
                 if ui
-                    .add_enabled(history.undo_label().is_some(), egui::Button::new(undo_label))
+                    .add_enabled(ui_state.undo_label.is_some(), egui::Button::new(undo_str))
                     .clicked()
                 {
                     undo_ev.send(UndoRequested);
                     ui.close_menu();
                 }
                 if ui
-                    .add_enabled(history.redo_label().is_some(), egui::Button::new(redo_label))
+                    .add_enabled(ui_state.redo_label.is_some(), egui::Button::new(redo_str))
                     .clicked()
                 {
                     redo_ev.send(RedoRequested);
@@ -132,6 +177,38 @@ fn draw_menu_bar(
                 }
                 ui.separator();
                 if ui.button("Project Settings…").clicked() {
+                    ui.close_menu();
+                }
+            });
+
+            // ── Create ────────────────────────────────────────────────────
+            ui.menu_button("Create", |ui| {
+                if ui.button("🔲  Blank Entity").clicked() {
+                    spawn_ev.send(SpawnEntityRequest(PrimitiveKind::Blank));
+                    ui.close_menu();
+                }
+                ui.separator();
+                ui.label(egui::RichText::new("Primitives").weak().small());
+                if ui.button("🟫  Cube").clicked() {
+                    spawn_ev.send(SpawnEntityRequest(PrimitiveKind::Cube));
+                    ui.close_menu();
+                }
+                if ui.button("🔵  Sphere").clicked() {
+                    spawn_ev.send(SpawnEntityRequest(PrimitiveKind::Sphere));
+                    ui.close_menu();
+                }
+                if ui.button("⬜  Plane").clicked() {
+                    spawn_ev.send(SpawnEntityRequest(PrimitiveKind::Plane));
+                    ui.close_menu();
+                }
+                ui.separator();
+                ui.label(egui::RichText::new("Lights").weak().small());
+                if ui.button("☀  Directional Light").clicked() {
+                    spawn_ev.send(SpawnEntityRequest(PrimitiveKind::DirectionalLight));
+                    ui.close_menu();
+                }
+                if ui.button("💡  Point Light").clicked() {
+                    spawn_ev.send(SpawnEntityRequest(PrimitiveKind::PointLight));
                     ui.close_menu();
                 }
             });
@@ -151,11 +228,21 @@ fn draw_menu_bar(
                 ui.separator();
                 ui.label(egui::RichText::new("Panels").weak().small());
                 ui.separator();
-                if ui.button("Outliner").clicked() { ui.close_menu(); }
-                if ui.button("Details").clicked() { ui.close_menu(); }
-                if ui.button("Content Browser").clicked() { ui.close_menu(); }
-                if ui.button("Output Log").clicked() { ui.close_menu(); }
+                if ui.button("Outliner").clicked()         { ui.close_menu(); }
+                if ui.button("Details").clicked()          { ui.close_menu(); }
+                if ui.button("Content Browser").clicked()  { ui.close_menu(); }
+                if ui.button("Output Log").clicked()       { ui.close_menu(); }
                 if ui.button("🌍 World Settings").clicked() { ui.close_menu(); }
+                ui.separator();
+                let hist_label = if ui_state.undo_history_visible {
+                    "✔ Undo History"
+                } else {
+                    "Undo History"
+                };
+                if ui.button(hist_label).clicked() {
+                    ui_state.undo_history_visible = !ui_state.undo_history_visible;
+                    ui.close_menu();
+                }
             });
 
             // ── Play toolbar ─────────────────────────────────────────────
@@ -189,3 +276,168 @@ fn draw_menu_bar(
         });
     });
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Snap settings toolbar (below menu bar)
+// ────────────────────────────────────────────────────────────────────────────
+
+fn draw_snap_toolbar(
+    mut contexts: EguiContexts,
+    mut snap:     ResMut<SnapSettings>,
+    mode:         Res<State<EditorMode>>,
+) {
+    if *mode.get() != EditorMode::Editing {
+        return;
+    }
+
+    let ctx = contexts.ctx_mut();
+
+    egui::TopBottomPanel::top("nf_snap_toolbar")
+        .exact_height(28.0)
+        .show(ctx, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.label(egui::RichText::new("Snap:").weak().small());
+
+                // ── Translate ─────────────────────────────────────────────
+                ui.checkbox(&mut snap.translate_enabled, "T");
+                ui.add_enabled(
+                    snap.translate_enabled,
+                    egui::DragValue::new(&mut snap.translate_snap)
+                        .speed(0.05)
+                        .range(0.01..=100.0_f32)
+                        .suffix(" m"),
+                );
+
+                ui.separator();
+
+                // ── Rotate ────────────────────────────────────────────────
+                ui.checkbox(&mut snap.rotate_enabled, "R");
+                ui.add_enabled(
+                    snap.rotate_enabled,
+                    egui::DragValue::new(&mut snap.rotate_snap)
+                        .speed(0.5)
+                        .range(1.0..=180.0_f32)
+                        .suffix("°"),
+                );
+
+                ui.separator();
+
+                // ── Scale ─────────────────────────────────────────────────
+                ui.checkbox(&mut snap.scale_enabled, "S");
+                ui.add_enabled(
+                    snap.scale_enabled,
+                    egui::DragValue::new(&mut snap.scale_snap)
+                        .speed(0.01)
+                        .range(0.01..=10.0_f32)
+                        .suffix("×"),
+                );
+            });
+        });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Undo History floating window
+// ────────────────────────────────────────────────────────────────────────────
+
+fn draw_undo_history_window(
+    mut contexts: EguiContexts,
+    mut ui_state: ResMut<EditorUiState>,
+    history:      Res<CommandHistory>,
+    mut undo_ev:  EventWriter<UndoRequested>,
+    mut redo_ev:  EventWriter<RedoRequested>,
+) {
+    if !ui_state.undo_history_visible {
+        return;
+    }
+
+    let ctx = contexts.ctx_mut();
+    let mut open = true;
+
+    egui::Window::new("🕰 Undo History")
+        .open(&mut open)
+        .default_width(220.0)
+        .resizable(true)
+        .show(ctx, |ui| {
+            let undo_labels = history.undo_stack_labels();
+            let redo_labels = history.redo_stack_labels();
+
+            // ── Redo stack (shown greyed — future actions on top) ─────────
+            if !redo_labels.is_empty() {
+                ui.label(
+                    egui::RichText::new("── Redo stack ──")
+                        .color(egui::Color32::from_rgb(140, 140, 140))
+                        .small(),
+                );
+                egui::ScrollArea::vertical()
+                    .id_source("redo_scroll")
+                    .max_height(100.0)
+                    .show(ui, |ui| {
+                        for (i, lbl) in redo_labels.iter().enumerate() {
+                            let text = egui::RichText::new(format!("↷  {lbl}"))
+                                .color(egui::Color32::from_rgb(140, 200, 140))
+                                .small();
+                            if ui.selectable_label(i == 0, text).clicked() && i == 0 {
+                                redo_ev.send(RedoRequested);
+                            }
+                        }
+                    });
+                ui.separator();
+            }
+
+            // ── Undo stack (most recent first) ────────────────────────────
+            ui.label(
+                egui::RichText::new("── Undo stack ──")
+                    .color(egui::Color32::from_rgb(200, 200, 200))
+                    .small(),
+            );
+            if undo_labels.is_empty() {
+                ui.label(
+                    egui::RichText::new("(nothing to undo)")
+                        .color(egui::Color32::GRAY)
+                        .small()
+                        .italics(),
+                );
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_source("undo_scroll")
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for (i, lbl) in undo_labels.iter().enumerate() {
+                            let color = if i == 0 {
+                                egui::Color32::from_rgb(255, 220, 100)
+                            } else {
+                                egui::Color32::from_rgb(180, 180, 180)
+                            };
+                            let row = ui.selectable_label(
+                                i == 0,
+                                egui::RichText::new(format!("↩  {lbl}")).color(color).small(),
+                            );
+                            if row.clicked() && i == 0 {
+                                undo_ev.send(UndoRequested);
+                            }
+                        }
+                    });
+            }
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!undo_labels.is_empty(), egui::Button::new("↩ Undo"))
+                    .clicked()
+                {
+                    undo_ev.send(UndoRequested);
+                }
+                if ui
+                    .add_enabled(!redo_labels.is_empty(), egui::Button::new("↷ Redo"))
+                    .clicked()
+                {
+                    redo_ev.send(RedoRequested);
+                }
+            });
+        });
+
+    if !open {
+        ui_state.undo_history_visible = false;
+    }
+}
+

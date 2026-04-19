@@ -81,6 +81,16 @@ impl CommandHistory {
     pub fn redo_label(&self) -> Option<&str> {
         self.redo_stack.last().map(|c| c.label())
     }
+
+    /// All labels on the undo stack, from newest (index 0) to oldest.
+    pub fn undo_stack_labels(&self) -> Vec<String> {
+        self.undo_stack.iter().rev().map(|c| c.label().to_owned()).collect()
+    }
+
+    /// All labels on the redo stack, from newest (index 0) to oldest.
+    pub fn redo_stack_labels(&self) -> Vec<String> {
+        self.redo_stack.iter().rev().map(|c| c.label().to_owned()).collect()
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
