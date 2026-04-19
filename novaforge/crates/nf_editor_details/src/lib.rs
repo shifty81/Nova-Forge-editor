@@ -1,9 +1,14 @@
 //! `nf_editor_details` — Details / Inspector panel.
+//!
+//! Extended to show voxel-specific components:
+//! * [`VoxelChunk`] — chunk grid position, solid voxel count, vertex count.
+//! * [`Planet`] — loaded chunk count, seed.
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use nf_editor_core::{EditorMode, EntityLabel};
 use nf_selection::FocusedEntity;
+use nf_voxel_planet::{ChunkInfo, ChunkManager, NoiseSeed, VoxelChunk};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Component descriptor (reflection bridge)
@@ -55,12 +60,16 @@ impl Plugin for EditorDetailsPlugin {
 // ────────────────────────────────────────────────────────────────────────────
 
 fn draw_details_panel(
-    mut contexts:  EguiContexts,
-    focused:       Res<FocusedEntity>,
-    registry:      Res<DetailsRegistry>,
-    mut labels:    Query<&mut EntityLabel>,
-    mut transforms: Query<&mut Transform>,
-    mode:          Res<State<EditorMode>>,
+    mut contexts:    EguiContexts,
+    focused:         Res<FocusedEntity>,
+    registry:        Res<DetailsRegistry>,
+    mut labels:      Query<&mut EntityLabel>,
+    mut transforms:  Query<&mut Transform>,
+    // Voxel-specific queries.
+    chunks:          Query<(&VoxelChunk, Option<&ChunkInfo>)>,
+    chunk_mgr:       Res<ChunkManager>,
+    seed:            Res<NoiseSeed>,
+    mode:            Res<State<EditorMode>>,
 ) {
     if *mode.get() != EditorMode::Editing {
         return;
@@ -104,15 +113,10 @@ fn draw_details_panel(
                                 ui.add(egui::DragValue::new(&mut tf.translation.z).speed(0.1).prefix("Z: "));
                                 ui.end_row();
 
-                                // Euler angles (degrees) for user friendliness.
-                                // Note: round-tripping quaternion→Euler→quaternion every frame
-                                // can exhibit gimbal lock at ±90° pitch.  A cached Euler
-                                // resource will be added in Phase 3.
                                 let (mut yaw, mut pitch, mut roll) = tf.rotation.to_euler(EulerRot::YXZ);
                                 yaw   = yaw.to_degrees();
                                 pitch = pitch.to_degrees();
                                 roll  = roll.to_degrees();
-
                                 let prev = (yaw, pitch, roll);
 
                                 ui.label("Rotation");
@@ -134,6 +138,44 @@ fn draw_details_panel(
                                 ui.add(egui::DragValue::new(&mut tf.scale.x).speed(0.01).prefix("X: "));
                                 ui.add(egui::DragValue::new(&mut tf.scale.y).speed(0.01).prefix("Y: "));
                                 ui.add(egui::DragValue::new(&mut tf.scale.z).speed(0.01).prefix("Z: "));
+                                ui.end_row();
+                            });
+                    });
+                ui.separator();
+            }
+
+            // ── VoxelChunk info ──────────────────────────────────────────
+            if let Ok((chunk, info)) = chunks.get(entity) {
+                egui::CollapsingHeader::new("🧱 Voxel Chunk")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        egui::Grid::new("chunk_info_grid")
+                            .num_columns(2)
+                            .spacing([8.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label("Grid Position");
+                                ui.label(format!(
+                                    "({}, {}, {})",
+                                    chunk.position.x, chunk.position.y, chunk.position.z
+                                ));
+                                ui.end_row();
+
+                                if let Some(info) = info {
+                                    ui.label("Solid Voxels");
+                                    ui.label(format!("{}", info.solid_voxel_count));
+                                    ui.end_row();
+
+                                    ui.label("Vertices");
+                                    ui.label(format!("{}", info.vertex_count));
+                                    ui.end_row();
+                                }
+
+                                ui.label("Total Loaded");
+                                ui.label(format!("{}", chunk_mgr.loaded.len()));
+                                ui.end_row();
+
+                                ui.label("World Seed");
+                                ui.label(format!("{}", seed.0));
                                 ui.end_row();
                             });
                     });
