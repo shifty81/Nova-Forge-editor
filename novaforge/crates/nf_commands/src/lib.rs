@@ -37,6 +37,16 @@ pub struct CommandHistory {
 }
 
 impl CommandHistory {
+    /// Push a command onto the undo stack **without** calling `apply`.
+    ///
+    /// Use this when the command's effect has already been applied directly
+    /// (e.g. live voxel painting) and you only want the undo capability.
+    /// Clears the redo stack just like [`execute`].
+    pub fn push_without_apply(&mut self, cmd: Box<dyn EditorCommand>) {
+        self.undo_stack.push(cmd);
+        self.redo_stack.clear();
+    }
+
     /// Execute a command and push it onto the undo stack.
     /// Clears the redo stack (branching history is not supported).
     pub fn execute(&mut self, mut cmd: Box<dyn EditorCommand>, world: &mut World) {
@@ -89,14 +99,24 @@ pub struct UndoRequested;
 #[derive(Event)]
 pub struct RedoRequested;
 
+/// Emitted when an entity's transform was moved interactively (e.g. gizmo
+/// drag) so an exclusive system can push a [`MoveTransformCommand`].
+#[derive(Event, Clone)]
+pub struct TransformMovedEvent {
+    pub entity:    Entity,
+    pub before:    Transform,
+    pub after:     Transform,
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Cursor resource for exclusive undo/redo system
 // ────────────────────────────────────────────────────────────────────────────
 
 #[derive(Resource, Default)]
 struct UndoRedoCursor {
-    undo: bevy::ecs::event::ManualEventReader<UndoRequested>,
-    redo: bevy::ecs::event::ManualEventReader<RedoRequested>,
+    undo:         bevy::ecs::event::ManualEventReader<UndoRequested>,
+    redo:         bevy::ecs::event::ManualEventReader<RedoRequested>,
+    transform_mv: bevy::ecs::event::ManualEventReader<TransformMovedEvent>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -113,6 +133,7 @@ impl Plugin for CommandHistoryPlugin {
             .add_event::<CommandHistoryChanged>()
             .add_event::<UndoRequested>()
             .add_event::<RedoRequested>()
+            .add_event::<TransformMovedEvent>()
             .add_systems(Update, apply_undo_redo);
     }
 }
@@ -148,4 +169,51 @@ fn apply_undo_redo(world: &mut World) {
         });
         world.send_event(CommandHistoryChanged);
     }
+
+    // ── Apply TransformMoved events → push MoveTransformCommand ─────────────
+    let moved_events: Vec<TransformMovedEvent> =
+        world.resource_scope(|world, mut cursor: Mut<UndoRedoCursor>| {
+            let events = world.resource::<Events<TransformMovedEvent>>();
+            cursor.transform_mv.read(events).cloned().collect()
+        });
+
+    for ev in moved_events {
+        world.resource_scope(|world, mut history: Mut<CommandHistory>| {
+            history.execute(
+                Box::new(MoveTransformCommand {
+                    entity: ev.entity,
+                    before: ev.before,
+                    after:  ev.after,
+                }),
+                world,
+            );
+        });
+    }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Concrete editor commands
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Move an entity's [`Transform`] — supports undo/redo.
+pub struct MoveTransformCommand {
+    pub entity: Entity,
+    pub before: Transform,
+    pub after:  Transform,
+}
+
+impl EditorCommand for MoveTransformCommand {
+    fn apply(&mut self, ctx: &mut EditorCommandContext) {
+        if let Some(mut tf) = ctx.world.get_mut::<Transform>(self.entity) {
+            *tf = self.after;
+        }
+    }
+    fn undo(&mut self, ctx: &mut EditorCommandContext) {
+        if let Some(mut tf) = ctx.world.get_mut::<Transform>(self.entity) {
+            *tf = self.before;
+        }
+    }
+    fn label(&self) -> &str { "Move" }
+}
+
+

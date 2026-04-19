@@ -14,39 +14,64 @@ use crate::RegenerateWorld;
 // ---------------------------------------------------------------------------
 
 /// Holds pre-built noise functions so they are not rebuilt every frame.
-/// Rebuilt automatically when [`NoiseSeed`] changes.
+/// Rebuilt automatically when [`NoiseSeed`] or noise-related [`WorldSettings`]
+/// change.
 #[derive(Resource)]
 pub struct NoiseCache {
     /// Seed the cache was built from.
-    pub seed:         u32,
+    pub seed:             u32,
     /// Height FBM used for terrain.
-    pub height_fbm:   Fbm<Perlin>,
+    pub height_fbm:       Fbm<Perlin>,
     /// Moisture FBM used for biome classification.
-    pub moisture_fbm: Fbm<Perlin>,
+    pub moisture_fbm:     Fbm<Perlin>,
     /// Shared material applied to every voxel chunk.
-    pub chunk_mat:    Option<Handle<StandardMaterial>>,
+    pub chunk_mat:        Option<Handle<StandardMaterial>>,
+    // ── Snapshot of generation params (used for change detection) ──────────
+    pub terrain_noise_scale:  f64,
+    pub moisture_noise_scale: f64,
+    pub max_terrain_height:   f32,
+    pub noise_octaves:        usize,
+    pub noise_lacunarity:     f64,
+    pub noise_persistence:    f64,
 }
 
 impl NoiseCache {
-    fn build(seed: u32) -> Self {
+    pub fn build(seed: u32, settings: &WorldSettings) -> Self {
         let height_fbm: Fbm<Perlin> = Fbm::<Perlin>::new(seed)
-            .set_octaves(8)
-            .set_frequency(TERRAIN_NOISE_SCALE)
-            .set_lacunarity(2.0)
-            .set_persistence(0.5);
+            .set_octaves(settings.noise_octaves)
+            .set_frequency(settings.terrain_noise_scale)
+            .set_lacunarity(settings.noise_lacunarity)
+            .set_persistence(settings.noise_persistence);
 
         let moisture_fbm: Fbm<Perlin> = Fbm::<Perlin>::new(seed.wrapping_add(7777))
-            .set_octaves(5)
-            .set_frequency(MOISTURE_NOISE_SCALE)
-            .set_lacunarity(2.1)
-            .set_persistence(0.45);
+            .set_octaves(settings.noise_octaves.min(5))
+            .set_frequency(settings.moisture_noise_scale)
+            .set_lacunarity(settings.noise_lacunarity)
+            .set_persistence(settings.noise_persistence);
 
         Self {
             seed,
             height_fbm,
             moisture_fbm,
             chunk_mat: None,
+            terrain_noise_scale:  settings.terrain_noise_scale,
+            moisture_noise_scale: settings.moisture_noise_scale,
+            max_terrain_height:   settings.max_terrain_height,
+            noise_octaves:        settings.noise_octaves,
+            noise_lacunarity:     settings.noise_lacunarity,
+            noise_persistence:    settings.noise_persistence,
         }
+    }
+
+    /// Returns true if any noise parameter stored in `settings` differs from
+    /// what was used to build this cache.
+    pub fn params_match(&self, settings: &WorldSettings) -> bool {
+        self.terrain_noise_scale  == settings.terrain_noise_scale
+            && self.moisture_noise_scale == settings.moisture_noise_scale
+            && self.max_terrain_height   == settings.max_terrain_height
+            && self.noise_octaves        == settings.noise_octaves
+            && self.noise_lacunarity     == settings.noise_lacunarity
+            && self.noise_persistence    == settings.noise_persistence
     }
 }
 
@@ -63,11 +88,12 @@ impl Plugin for PlanetPlugin {
             .add_systems(
                 Update,
                 (
-                    rebuild_noise_on_seed_change,
+                    rebuild_noise_on_settings_change,
                     handle_regen_world,
                     unload_distant_chunks,
                     queue_chunks_around_viewpoint,
                     generate_pending_chunks,
+                    remesh_dirty_chunks,
                 )
                     .chain(),
             );
@@ -78,30 +104,37 @@ impl Plugin for PlanetPlugin {
 //  Noise cache initialisation / rebuilding
 // ---------------------------------------------------------------------------
 
-fn init_noise_cache(seed: Res<NoiseSeed>, mut commands: Commands) {
-    commands.insert_resource(NoiseCache::build(seed.0));
+fn init_noise_cache(
+    seed:     Res<NoiseSeed>,
+    settings: Res<WorldSettings>,
+    mut commands: Commands,
+) {
+    commands.insert_resource(NoiseCache::build(seed.0, &settings));
 }
 
-/// Rebuild the noise cache whenever the noise seed changes (e.g. via the
-/// World Settings panel) and clear pending chunks so old-seed geometry is not
+/// Rebuild the noise cache whenever the noise seed or terrain noise parameters
+/// change.  Also despawns non-manually-edited chunks so old geometry is not
 /// mixed with new-seed geometry.
-fn rebuild_noise_on_seed_change(
+fn rebuild_noise_on_settings_change(
     seed:          Res<NoiseSeed>,
+    settings:      Res<WorldSettings>,
     mut cache:     ResMut<NoiseCache>,
     mut chunk_mgr: ResMut<ChunkManager>,
-    chunk_query:   Query<Entity, With<VoxelChunk>>,
+    chunk_query:   Query<(Entity, &VoxelChunk), Without<ManuallyEdited>>,
     mut commands:  Commands,
 ) {
-    if !seed.is_changed() { return; }
-    if cache.seed == seed.0 { return; }
+    let seed_changed     = seed.is_changed() && cache.seed != seed.0;
+    let params_changed   = settings.is_changed() && !cache.params_match(&settings);
 
-    *cache = NoiseCache::build(seed.0);
+    if !seed_changed && !params_changed { return; }
 
-    // Despawn all existing chunks so they are regenerated with the new seed.
-    for entity in &chunk_query {
+    *cache = NoiseCache::build(seed.0, &settings);
+
+    // Despawn non-manually-edited chunks so they are regenerated with new params.
+    for (entity, chunk) in &chunk_query {
         commands.entity(entity).despawn_recursive();
+        chunk_mgr.loaded.remove(&chunk.position);
     }
-    chunk_mgr.loaded.clear();
     chunk_mgr.pending.clear();
 }
 
@@ -113,8 +146,9 @@ fn setup_planet(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     seed: Res<NoiseSeed>,
+    settings: Res<WorldSettings>,
 ) {
-    let mesh = build_planet_mesh(seed.0);
+    let mesh = build_planet_mesh(seed.0, settings.max_terrain_height);
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(mesh),
@@ -153,7 +187,7 @@ fn setup_planet(
     ));
 }
 
-fn build_planet_mesh(seed: u32) -> Mesh {
+fn build_planet_mesh(seed: u32, max_terrain_height: f32) -> Mesh {
     let height_fbm: Fbm<Perlin> = Fbm::<Perlin>::new(seed)
         .set_octaves(8)
         .set_frequency(TERRAIN_NOISE_SCALE)
@@ -188,7 +222,7 @@ fn build_planet_mesh(seed: u32) -> Mesh {
             let nz = phi.cos() * theta.sin();
 
             let h_raw    = height_fbm.get([nx as f64, ny as f64, nz as f64]) as f32;
-            let altitude = h_raw * MAX_TERRAIN_HEIGHT;
+            let altitude = h_raw * max_terrain_height;
             let radius   = PLANET_RADIUS + altitude;
 
             let m_raw    = moisture_fbm.get([nx as f64, ny as f64, nz as f64]) as f32;
@@ -235,14 +269,15 @@ fn build_planet_mesh(seed: u32) -> Mesh {
 fn handle_regen_world(
     mut events:    EventReader<RegenerateWorld>,
     mut chunk_mgr: ResMut<ChunkManager>,
-    chunk_query:   Query<Entity, With<VoxelChunk>>,
+    // Only despawn chunks that have NOT been hand-edited by the user.
+    chunk_query:   Query<(Entity, &VoxelChunk), Without<ManuallyEdited>>,
     mut commands:  Commands,
 ) {
     for _ev in events.read() {
-        for entity in &chunk_query {
+        for (entity, chunk) in &chunk_query {
             commands.entity(entity).despawn_recursive();
+            chunk_mgr.loaded.remove(&chunk.position);
         }
-        chunk_mgr.loaded.clear();
         chunk_mgr.pending.clear();
     }
 }
@@ -339,13 +374,12 @@ fn generate_pending_chunks(
             continue;
         }
 
-        let (voxels, solid_count) =
-            generate_chunk_data(coord, &cache.height_fbm, &cache.moisture_fbm);
-        let Some((mesh, vertex_count)) = build_chunk_mesh(&voxels) else {
-            chunk_mgr.loaded.insert(coord, Entity::PLACEHOLDER);
-            generated += 1;
-            continue;
-        };
+        let (voxels, solid_count) = generate_chunk_data(
+            coord,
+            &cache.height_fbm,
+            &cache.moisture_fbm,
+            cache.max_terrain_height,
+        );
 
         let cs     = (CHUNK_SIZE as f32) * VOXEL_SIZE;
         let origin = Vec3::new(
@@ -354,21 +388,39 @@ fn generate_pending_chunks(
             coord.z as f32 * cs,
         );
 
-        let entity = commands
-            .spawn((
-                PbrBundle {
-                    mesh:      meshes.add(mesh),
-                    material:  mat.clone(),
-                    transform: Transform::from_translation(origin),
-                    ..default()
-                },
-                VoxelChunk { position: coord },
-                ChunkInfo { solid_voxel_count: solid_count, vertex_count },
-                Name::new(format!("Chunk({},{},{})", coord.x, coord.y, coord.z)),
-            ))
-            .id();
+        if let Some((mesh, vertex_count)) = build_chunk_mesh(&voxels) {
+            let entity = commands
+                .spawn((
+                    PbrBundle {
+                        mesh:      meshes.add(mesh),
+                        material:  mat.clone(),
+                        transform: Transform::from_translation(origin),
+                        ..default()
+                    },
+                    VoxelChunk { position: coord },
+                    VoxelData(voxels),
+                    ChunkInfo { solid_voxel_count: solid_count, vertex_count },
+                    Name::new(format!("Chunk({},{},{})", coord.x, coord.y, coord.z)),
+                ))
+                .id();
 
-        chunk_mgr.loaded.insert(coord, entity);
+            chunk_mgr.loaded.insert(coord, entity);
+        } else {
+            // Empty chunk (all air): store a placeholder so we do not re-queue it.
+            let entity = commands
+                .spawn((
+                    TransformBundle::from_transform(Transform::from_translation(origin)),
+                    VisibilityBundle::default(),
+                    VoxelChunk { position: coord },
+                    VoxelData(voxels),
+                    ChunkInfo { solid_voxel_count: 0, vertex_count: 0 },
+                    Name::new(format!("Chunk({},{},{})", coord.x, coord.y, coord.z)),
+                ))
+                .id();
+
+            chunk_mgr.loaded.insert(coord, entity);
+        }
+
         generated += 1;
     }
 }
@@ -381,9 +433,10 @@ const CHUNK_VOL: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
 /// Returns the voxel data and the number of solid voxels in this chunk.
 fn generate_chunk_data(
-    coord:        IVec3,
-    height_fbm:   &impl NoiseFn<f64, 3>,
-    moisture_fbm: &impl NoiseFn<f64, 3>,
+    coord:              IVec3,
+    height_fbm:         &impl NoiseFn<f64, 3>,
+    moisture_fbm:       &impl NoiseFn<f64, 3>,
+    max_terrain_height: f32,
 ) -> (Vec<Voxel>, u32) {
     let mut voxels = vec![Voxel::Air; CHUNK_VOL];
     let mut solid  = 0u32;
@@ -412,7 +465,7 @@ fn generate_chunk_data(
                 let nz  = dir.z as f64;
 
                 let h_raw       = height_fbm.get([nx, ny, nz]) as f32;
-                let terrain_r   = PLANET_RADIUS + h_raw * MAX_TERRAIN_HEIGHT;
+                let terrain_r   = PLANET_RADIUS + h_raw * max_terrain_height;
 
                 if dist > terrain_r + 1.0 {
                     if dist <= SEA_LEVEL {
@@ -453,10 +506,30 @@ fn get_voxel(voxels: &[Voxel], x: i32, y: i32, z: i32) -> Voxel {
 }
 
 // ---------------------------------------------------------------------------
+//  Chunk remesh — rebuilds the mesh for any chunk flagged ChunkDirty
+// ---------------------------------------------------------------------------
+
+/// Whenever a chunk is marked [`ChunkDirty`] (e.g. by the voxel editing
+/// tools), this system rebuilds its mesh from the stored [`VoxelData`] and
+/// removes the dirty flag.
+fn remesh_dirty_chunks(
+    mut commands:    Commands,
+    mut meshes:      ResMut<Assets<Mesh>>,
+    mut dirty_chunks: Query<(Entity, &VoxelData, &mut Handle<Mesh>), With<ChunkDirty>>,
+) {
+    for (entity, voxel_data, mut mesh_handle) in &mut dirty_chunks {
+        if let Some((mesh, _)) = build_chunk_mesh(&voxel_data.0) {
+            *mesh_handle = meshes.add(mesh);
+        }
+        commands.entity(entity).remove::<ChunkDirty>();
+    }
+}
+
+// ---------------------------------------------------------------------------
 //  Chunk mesh builder — returns mesh + vertex count.
 // ---------------------------------------------------------------------------
 
-fn build_chunk_mesh(voxels: &[Voxel]) -> Option<(Mesh, u32)> {
+pub fn build_chunk_mesh(voxels: &[Voxel]) -> Option<(Mesh, u32)> {
     let cs = CHUNK_SIZE as i32;
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
@@ -538,4 +611,10 @@ pub fn terrain_radius_at(dir: Vec3, seed: u32) -> f32 {
         .set_persistence(0.5);
     let h_raw = fbm.get([dir.x as f64, dir.y as f64, dir.z as f64]) as f32;
     PLANET_RADIUS + h_raw * MAX_TERRAIN_HEIGHT
+}
+
+/// Compute a voxel index within a flat chunk array.
+#[inline]
+pub fn chunk_voxel_index(x: usize, y: usize, z: usize) -> usize {
+    x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE
 }

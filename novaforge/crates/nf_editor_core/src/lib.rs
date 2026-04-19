@@ -1,6 +1,7 @@
 //! `nf_editor_core` — editor modes, panel contracts, docking layout, shared events.
 
 use bevy::prelude::*;
+use nf_commands::{EditorCommand, EditorCommandContext};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared entity metadata
@@ -84,4 +85,29 @@ fn handle_mode_requests(
     for ev in events.read() {
         next.set(ev.0);
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Concrete editor commands defined here (has access to EntityLabel)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Rename an entity's [`EntityLabel`] — supports undo/redo.
+pub struct RenameEntityCommand {
+    pub entity:   Entity,
+    pub old_name: String,
+    pub new_name: String,
+}
+
+impl EditorCommand for RenameEntityCommand {
+    fn apply(&mut self, ctx: &mut EditorCommandContext) {
+        if let Some(mut lbl) = ctx.world.get_mut::<EntityLabel>(self.entity) {
+            lbl.0 = self.new_name.clone();
+        }
+    }
+    fn undo(&mut self, ctx: &mut EditorCommandContext) {
+        if let Some(mut lbl) = ctx.world.get_mut::<EntityLabel>(self.entity) {
+            lbl.0 = self.old_name.clone();
+        }
+    }
+    fn label(&self) -> &str { "Rename" }
 }

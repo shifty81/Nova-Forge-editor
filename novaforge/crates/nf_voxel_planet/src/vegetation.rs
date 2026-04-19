@@ -16,20 +16,29 @@ impl Plugin for VegetationPlugin {
 }
 
 fn spawn_vegetation_around_player(
-    mut commands:  Commands,
-    mut meshes:    ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    player_query:  Query<&Transform, With<Player>>,
-    tree_query:    Query<(Entity, &Transform), (With<Tree>, Without<Player>)>,
-    grass_query:   Query<(Entity, &Transform), (With<GrassDecoration>, Without<Player>)>,
-    seed:          Res<NoiseSeed>,
+    mut commands:   Commands,
+    mut meshes:     ResMut<Assets<Mesh>>,
+    mut materials:  ResMut<Assets<StandardMaterial>>,
+    player_query:   Query<&Transform, With<Player>>,
+    tree_query:     Query<(Entity, &Transform), (With<Tree>, Without<Player>)>,
+    grass_query:    Query<(Entity, &Transform), (With<GrassDecoration>, Without<Player>)>,
+    seed:           Res<NoiseSeed>,
+    world_settings: Res<WorldSettings>,
 ) {
     let Ok(player_tf) = player_query.get_single() else { return };
 
-    let player_pos = player_tf.translation;
-    let local_up   = player_pos.normalize_or_zero();
+    let player_pos    = player_tf.translation;
+    let local_up      = player_pos.normalize_or_zero();
+    let veg_radius    = world_settings.vegetation_radius;
+    let despawn_r     = veg_radius * 1.5;
+    let tree_chance   = world_settings.tree_spawn_chance;
+    let grass_chance  = world_settings.grass_spawn_chance;
 
-    let despawn_r = VEGETATION_RADIUS * 1.5;
+    let tree_prob_forest = tree_chance * 80.0;
+    let tree_prob_plains = tree_chance * 30.0;
+    let tree_prob_desert = tree_chance * 10.0;
+    let tree_prob_tundra = tree_chance *  8.0;
+
     for (entity, tf) in &tree_query {
         if (tf.translation - player_pos).length() > despawn_r {
             commands.entity(entity).despawn_recursive();
@@ -43,11 +52,11 @@ fn spawn_vegetation_around_player(
 
     let existing_trees = tree_query
         .iter()
-        .filter(|(_, tf)| (tf.translation - player_pos).length() < VEGETATION_RADIUS)
+        .filter(|(_, tf)| (tf.translation - player_pos).length() < veg_radius)
         .count();
     let existing_grass = grass_query
         .iter()
-        .filter(|(_, tf)| (tf.translation - player_pos).length() < VEGETATION_RADIUS)
+        .filter(|(_, tf)| (tf.translation - player_pos).length() < veg_radius)
         .count();
 
     let need_trees = existing_trees < 80;
@@ -58,7 +67,7 @@ fn spawn_vegetation_around_player(
 
     for _ in 0..8 {
         let angle_h = rng.gen_range(0.0f32..2.0 * PI);
-        let spread  = rng.gen_range(5.0f32..VEGETATION_RADIUS);
+        let spread  = rng.gen_range(5.0f32..veg_radius);
 
         let ref_right = if local_up.abs().dot(Vec3::X) < 0.9 {
             Vec3::X.cross(local_up).normalize()
@@ -78,25 +87,25 @@ fn spawn_vegetation_around_player(
         if need_trees {
             match biome {
                 Biome::Forest | Biome::TropicalForest => {
-                    if rng.gen_range(0.0f32..1.0) < TREE_PROB_FOREST {
+                    if rng.gen_range(0.0f32..1.0) < tree_prob_forest {
                         let pos = cand_dir * (surface_r + 0.5);
                         spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Broadleaf, &mut rng);
                     }
                 }
                 Biome::Plains | Biome::Savanna => {
-                    if rng.gen_range(0.0f32..1.0) < TREE_PROB_PLAINS {
+                    if rng.gen_range(0.0f32..1.0) < tree_prob_plains {
                         let pos = cand_dir * (surface_r + 0.5);
                         spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Oak, &mut rng);
                     }
                 }
                 Biome::Desert => {
-                    if rng.gen_range(0.0f32..1.0) < TREE_PROB_DESERT {
+                    if rng.gen_range(0.0f32..1.0) < tree_prob_desert {
                         let pos = cand_dir * (surface_r + 0.5);
                         spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Cactus, &mut rng);
                     }
                 }
                 Biome::Tundra => {
-                    if rng.gen_range(0.0f32..1.0) < TREE_PROB_TUNDRA {
+                    if rng.gen_range(0.0f32..1.0) < tree_prob_tundra {
                         let pos = cand_dir * (surface_r + 0.5);
                         spawn_tree(&mut commands, &mut meshes, &mut materials, pos, cand_dir, TreeKind::Pine, &mut rng);
                     }
@@ -108,7 +117,7 @@ fn spawn_vegetation_around_player(
         if need_grass {
             match biome {
                 Biome::Plains | Biome::Forest | Biome::TropicalForest | Biome::Savanna => {
-                    if rng.gen_range(0.0f32..1.0) < GRASS_SPAWN_CHANCE {
+                    if rng.gen_range(0.0f32..1.0) < grass_chance {
                         let pos = cand_dir * (surface_r + 0.02);
                         spawn_grass(&mut commands, &mut meshes, &mut materials, pos, cand_dir, &mut rng);
                     }

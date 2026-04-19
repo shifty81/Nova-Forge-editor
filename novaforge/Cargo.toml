@@ -22,6 +22,7 @@ members = [
     "crates/nf_editor_log",
     "crates/nf_editor_project",
     "crates/nf_editor_world_settings",
+    "crates/nf_editor_voxel_tools",
     "crates/nf_runtime_app",
     "crates/nf_editor_app",
 ]
@@ -62,6 +63,7 @@ nf_editor_play       = { path = "crates/nf_editor_play" }
 nf_editor_log        = { path = "crates/nf_editor_log" }
 nf_editor_project    = { path = "crates/nf_editor_project" }
 nf_editor_world_settings = { path = "crates/nf_editor_world_settings" }
+nf_editor_voxel_tools    = { path = "crates/nf_editor_voxel_tools" }
 
 [profile.dev]
 opt-level = 1

@@ -31,3 +31,4 @@ nf_editor_play        = { workspace = true }
 nf_editor_log         = { workspace = true }
 nf_editor_project     = { workspace = true }
 nf_editor_world_settings = { workspace = true }
+nf_editor_voxel_tools    = { workspace = true }

@@ -32,6 +32,7 @@ use nf_editor_scene::EditorScenePlugin;
 use nf_editor_ui::EditorUiPlugin;
 use nf_editor_viewport::EditorViewportPlugin;
 use nf_editor_world_settings::EditorWorldSettingsPlugin;
+use nf_editor_voxel_tools::VoxelToolsPlugin;
 
 fn main() {
     App::new()
@@ -77,6 +78,7 @@ fn main() {
             EditorLogPlugin,
             EditorProjectPlugin,
             EditorWorldSettingsPlugin,
+            VoxelToolsPlugin,
         ))
 
         .run();

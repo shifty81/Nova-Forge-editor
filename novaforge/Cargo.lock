@@ -2779,6 +2779,7 @@ dependencies = [
  "nf_editor_scene",
  "nf_editor_ui",
  "nf_editor_viewport",
+ "nf_editor_voxel_tools",
  "nf_editor_world_settings",
  "nf_gizmos",
  "nf_prefab",
@@ -2909,6 +2910,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nf_editor_voxel_tools"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_egui",
+ "nf_commands",
+ "nf_editor_core",
+ "nf_selection",
+ "nf_voxel_planet",
+]
+
+[[package]]
 name = "nf_editor_world_settings"
 version = "0.1.0"
 dependencies = [
@@ -2932,6 +2945,7 @@ name = "nf_gizmos"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "nf_commands",
  "nf_core",
  "nf_editor_core",
  "nf_selection",
