@@ -211,7 +211,7 @@ fn voxel_display_name(v: Voxel) -> &'static str {
     }
 }
 
-/// Approximate sRGB colour for the voxel type (matches `biome.rs` colour()). 
+/// Approximate sRGB color for the voxel type (matches `biome.rs` color()).
 fn voxel_egui_color(v: Voxel) -> egui::Color32 {
     match v {
         Voxel::Grass      => egui::Color32::from_rgb(80,  140, 60),
@@ -362,17 +362,8 @@ fn voxel_edit_system(
         // Push command into history (the voxels were already mutated live;
         // apply() in command is idempotent because it sets to the same value).
         let cmd = BrushStrokeCommand { edits, label };
-        // We use `history.execute` but skip the apply since voxels are already set.
-        // We push directly to avoid double-apply.
-        // Note: this pushes a command whose apply() sets voxels to new_voxel again —
-        // idempotent on first call, correct for redo.
-        let world_ptr: *mut World = std::ptr::null_mut(); // placeholder — execute needs world
-        let _ = world_ptr;
-        // Store in undo stack indirectly through the resource scope approach.
-        // Since we're in a normal system (not exclusive), we push via a deferred
-        // approach: store the edits in a local resource and let an exclusive
-        // system pick them up.  For simplicity in this version, we record the
-        // command without re-applying (the edit is already live).
+        // Push the command to the undo stack without re-applying (voxels are
+        // already mutated live during the drag).
         history.push_without_apply(Box::new(cmd));
     }
     stroke.pressing = pressing;

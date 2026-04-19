@@ -215,5 +215,3 @@ impl EditorCommand for MoveTransformCommand {
     }
     fn label(&self) -> &str { "Move" }
 }
-
-
