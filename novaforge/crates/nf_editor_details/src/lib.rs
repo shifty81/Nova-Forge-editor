@@ -6,7 +6,9 @@
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use nf_editor_core::{EditorMode, EntityLabel};
+use nf_editor_core::{
+    DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EntityLabel,
+};
 use nf_selection::FocusedEntity;
 use nf_voxel_planet::{ChunkInfo, ChunkManager, NoiseSeed, VoxelChunk};
 
@@ -60,16 +62,18 @@ impl Plugin for EditorDetailsPlugin {
 // ────────────────────────────────────────────────────────────────────────────
 
 fn draw_details_panel(
-    mut contexts:    EguiContexts,
-    focused:         Res<FocusedEntity>,
-    registry:        Res<DetailsRegistry>,
-    mut labels:      Query<&mut EntityLabel>,
-    mut transforms:  Query<&mut Transform>,
+    mut contexts:     EguiContexts,
+    focused:          Res<FocusedEntity>,
+    registry:         Res<DetailsRegistry>,
+    mut labels:       Query<&mut EntityLabel>,
+    mut transforms:   Query<&mut Transform>,
     // Voxel-specific queries.
-    chunks:          Query<(&VoxelChunk, Option<&ChunkInfo>)>,
-    chunk_mgr:       Res<ChunkManager>,
-    seed:            Res<NoiseSeed>,
-    mode:            Res<State<EditorMode>>,
+    chunks:           Query<(&VoxelChunk, Option<&ChunkInfo>)>,
+    chunk_mgr:        Res<ChunkManager>,
+    seed:             Res<NoiseSeed>,
+    mode:             Res<State<EditorMode>>,
+    mut delete_ev:    EventWriter<DeleteEntityRequest>,
+    mut dup_ev:       EventWriter<DuplicateEntityRequest>,
 ) {
     if *mode.get() != EditorMode::Editing {
         return;
@@ -207,6 +211,14 @@ fn draw_details_panel(
             }
 
             ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("⧉ Duplicate  Ctrl+D").clicked() {
+                    dup_ev.send(DuplicateEntityRequest(entity));
+                }
+                if ui.button("🗑 Delete  Del").clicked() {
+                    delete_ev.send(DeleteEntityRequest(entity));
+                }
+            });
             if ui.button("+ Add Component").clicked() {
                 // Component-picker popup will be added in Phase 3.
             }

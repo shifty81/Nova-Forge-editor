@@ -2880,6 +2880,8 @@ dependencies = [
  "nf_core",
  "nf_editor_core",
  "nf_scene",
+ "nf_selection",
+ "ron",
 ]
 
 [[package]]
@@ -2895,6 +2897,8 @@ dependencies = [
  "nf_editor_scene",
  "nf_editor_viewport",
  "nf_gizmos",
+ "nf_scene",
+ "nf_selection",
  "nf_voxel_planet",
 ]
 

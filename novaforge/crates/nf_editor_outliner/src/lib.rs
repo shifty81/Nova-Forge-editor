@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use nf_editor_core::{EditorMode, EntityLabel};
+use nf_editor_core::{DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EntityLabel};
 use nf_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 use nf_voxel_planet::{
     ChunkManager, GrassDecoration, Moon, Planet, Player, Sun, Tree, VoxelChunk, WeatherParticle,
@@ -111,6 +111,8 @@ fn draw_outliner_panel(
     // For batch-delete of selected chunks
     chunk_query:  Query<Entity, With<VoxelChunk>>,
     mut commands: Commands,
+    mut delete_ev: EventWriter<DeleteEntityRequest>,
+    mut dup_ev:   EventWriter<DuplicateEntityRequest>,
 ) {
     if *mode.get() != EditorMode::Editing {
         return;
@@ -144,7 +146,11 @@ fn draw_outliner_panel(
                             .small(),
                     );
                     if ui.small_button("✖ Delete Selected Chunks").clicked() {
-                        // Despawn selected entities that are chunks.
+                        // Batch-chunk deletion bypasses the undo history because chunk
+                        // entities are procedurally regenerated from world data; they
+                        // cannot be trivially re-created by a generic DeleteEntityCommand.
+                        // Single user-entity deletion goes through DeleteEntityRequest
+                        // (undo-able) instead.
                         let to_delete: Vec<Entity> = selected
                             .iter()
                             .copied()
@@ -186,7 +192,7 @@ fn draw_outliner_panel(
                             "Saturn","Uranus","Neptune","SunLight"]
                             .iter().any(|p| name.contains(p))
                         {
-                            entity_row(ui, entity, name, &mut focused, &mut selected, &mut changed, &filter, ctrl_held);
+                            entity_row(ui, entity, name, &mut focused, &mut selected, &mut changed, &filter, ctrl_held, &mut delete_ev, &mut dup_ev);
                         }
                     }
                 });
@@ -198,7 +204,7 @@ fn draw_outliner_panel(
                     .default_open(true)
                     .show(ui, |ui| {
                         for &entity in &counts.planets {
-                            entity_row(ui, entity, "Planet", &mut focused, &mut selected, &mut changed, &filter, ctrl_held);
+                            entity_row(ui, entity, "Planet", &mut focused, &mut selected, &mut changed, &filter, ctrl_held, &mut delete_ev, &mut dup_ev);
                         }
                     });
 
@@ -212,7 +218,7 @@ fn draw_outliner_panel(
                 .default_open(false)
                 .show(ui, |ui| {
                     for &entity in &counts.chunks {
-                        entity_row(ui, entity, "Chunk", &mut focused, &mut selected, &mut changed, &filter, ctrl_held);
+                        entity_row(ui, entity, "Chunk", &mut focused, &mut selected, &mut changed, &filter, ctrl_held, &mut delete_ev, &mut dup_ev);
                     }
                 });
 
@@ -255,7 +261,7 @@ fn draw_outliner_panel(
                         .default_open(true)
                         .show(ui, |ui| {
                             for &entity in &counts.players {
-                                entity_row(ui, entity, "Player", &mut focused, &mut selected, &mut changed, &filter, ctrl_held);
+                                entity_row(ui, entity, "Player", &mut focused, &mut selected, &mut changed, &filter, ctrl_held, &mut delete_ev, &mut dup_ev);
                             }
                         });
                 }
@@ -322,7 +328,7 @@ fn draw_outliner_panel(
                                 if *depth > 0 {
                                     ui.add_space(*depth as f32 * 16.0);
                                 }
-                                entity_row(ui, entity, &lbl, &mut focused, &mut selected, &mut changed, &filter, ctrl_held);
+                                entity_row(ui, entity, &lbl, &mut focused, &mut selected, &mut changed, &filter, ctrl_held, &mut delete_ev, &mut dup_ev);
                             });
                         }
                     });
@@ -334,15 +340,18 @@ fn draw_outliner_panel(
 ///
 /// * Plain click → single-select (clears multi-selection, sets FocusedEntity).
 /// * Ctrl+click  → add/remove entity from multi-selection only.
+/// * Right-click → context menu with Focus, Duplicate, Delete.
 fn entity_row(
-    ui:       &mut egui::Ui,
-    entity:   Entity,
-    name:     &str,
-    focused:  &mut FocusedEntity,
-    selected: &mut SelectedEntities,
-    changed:  &mut EventWriter<SelectionChanged>,
-    filter:   &str,
-    ctrl:     bool,
+    ui:        &mut egui::Ui,
+    entity:    Entity,
+    name:      &str,
+    focused:   &mut FocusedEntity,
+    selected:  &mut SelectedEntities,
+    changed:   &mut EventWriter<SelectionChanged>,
+    filter:    &str,
+    ctrl:      bool,
+    delete_ev: &mut EventWriter<DeleteEntityRequest>,
+    dup_ev:    &mut EventWriter<DuplicateEntityRequest>,
 ) {
     let display = if name.is_empty() {
         format!("Entity({entity:?})")
@@ -361,6 +370,8 @@ fn entity_row(
         egui::RichText::new(&display)
     };
     let row = ui.selectable_label(is_focused, label);
+
+    // Left-click behaviour.
     if row.clicked() {
         if ctrl {
             // Ctrl+click: toggle multi-selection; keep focused on primary
@@ -375,4 +386,23 @@ fn entity_row(
         }
         changed.send(SelectionChanged);
     }
+
+    // Right-click context menu.
+    row.context_menu(|ui| {
+        if ui.button("🎯 Focus").clicked() {
+            focused.0 = Some(entity);
+            selected.set_single(entity);
+            changed.send(SelectionChanged);
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button("⧉ Duplicate").clicked() {
+            dup_ev.send(DuplicateEntityRequest(entity));
+            ui.close_menu();
+        }
+        if ui.button("🗑 Delete").clicked() {
+            delete_ev.send(DeleteEntityRequest(entity));
+            ui.close_menu();
+        }
+    });
 }

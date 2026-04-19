@@ -3,13 +3,18 @@
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
-use nf_editor_core::{EditorMode, PrimitiveKind, RequestEditorMode, SpawnEntityRequest};
+use nf_editor_core::{
+    DeleteEntityRequest, DuplicateEntityRequest, EditorMode,
+    PrimitiveKind, RequestEditorMode, SpawnEntityRequest,
+};
 use nf_editor_scene::{NewSceneRequest, OpenSceneRequest, SaveSceneRequest};
 use nf_editor_play::{StartPie, StopPie, PausePie};
 use nf_editor_viewport::TeleportEditorCamera;
 use nf_commands::{UndoRequested, RedoRequested, CommandHistory};
 use nf_voxel_planet::{SaveWorldRequest, LoadWorldRequest};
 use nf_gizmos::SnapSettings;
+use nf_selection::FocusedEntity;
+use nf_scene::{ActiveScenePath, SceneDirty};
 
 /// Default path used when saving the voxel world data.
 const DEFAULT_WORLD_SAVE_PATH: &str = "world.voxelworld";
@@ -32,6 +37,14 @@ struct EditorUiState {
     redo_label: Option<String>,
     /// Whether the floating Undo History window is currently shown.
     undo_history_visible: bool,
+    /// Name of the currently open scene (or "Untitled").
+    active_scene_name: String,
+    /// Whether the scene has unsaved changes.
+    scene_is_dirty: bool,
+    /// Set to true by the Edit menu to delete the focused entity.
+    delete_entity_requested: bool,
+    /// Set to true by the Edit menu to duplicate the focused entity.
+    duplicate_entity_requested: bool,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -55,6 +68,7 @@ impl Plugin for EditorUiPlugin {
                     draw_menu_bar,
                     draw_snap_toolbar,
                     draw_undo_history_window,
+                    dispatch_ui_requests,
                 )
                     .chain(),
             );
@@ -66,9 +80,13 @@ impl Plugin for EditorUiPlugin {
 // ────────────────────────────────────────────────────────────────────────────
 
 fn keyboard_shortcuts(
-    keys:        Res<ButtonInput<KeyCode>>,
-    mut undo_ev: EventWriter<UndoRequested>,
-    mut redo_ev: EventWriter<RedoRequested>,
+    keys:         Res<ButtonInput<KeyCode>>,
+    mode:         Res<State<EditorMode>>,
+    focused:      Res<FocusedEntity>,
+    mut undo_ev:  EventWriter<UndoRequested>,
+    mut redo_ev:  EventWriter<RedoRequested>,
+    mut delete_ev: EventWriter<DeleteEntityRequest>,
+    mut dup_ev:   EventWriter<DuplicateEntityRequest>,
 ) {
     let ctrl  = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let shift = keys.any_pressed([KeyCode::ShiftLeft,   KeyCode::ShiftRight]);
@@ -80,6 +98,25 @@ fn keyboard_shortcuts(
     if ctrl && (keys.just_pressed(KeyCode::KeyY) || (shift && keys.just_pressed(KeyCode::KeyZ))) {
         redo_ev.send(RedoRequested);
     }
+
+    // Only meaningful in Editing mode.
+    if *mode.get() != EditorMode::Editing {
+        return;
+    }
+
+    // Delete key — despawn focused entity.
+    if keys.just_pressed(KeyCode::Delete) {
+        if let Some(entity) = focused.0 {
+            delete_ev.send(DeleteEntityRequest(entity));
+        }
+    }
+
+    // Ctrl+D — duplicate focused entity.
+    if ctrl && !shift && keys.just_pressed(KeyCode::KeyD) {
+        if let Some(entity) = focused.0 {
+            dup_ev.send(DuplicateEntityRequest(entity));
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -87,11 +124,20 @@ fn keyboard_shortcuts(
 // ────────────────────────────────────────────────────────────────────────────
 
 fn sync_ui_state(
-    history:  Res<CommandHistory>,
-    mut state: ResMut<EditorUiState>,
+    history:     Res<CommandHistory>,
+    mut state:   ResMut<EditorUiState>,
+    active_path: Res<ActiveScenePath>,
+    dirty:       Res<SceneDirty>,
 ) {
     state.undo_label = history.undo_label().map(str::to_owned);
     state.redo_label = history.redo_label().map(str::to_owned);
+    state.active_scene_name = active_path.0
+        .as_ref()
+        .and_then(|p| p.file_stem())
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled")
+        .to_owned();
+    state.scene_is_dirty = dirty.0;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -173,6 +219,15 @@ fn draw_menu_bar(
                     .clicked()
                 {
                     redo_ev.send(RedoRequested);
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("⧉ Duplicate  Ctrl+D").clicked() {
+                    ui_state.duplicate_entity_requested = true;
+                    ui.close_menu();
+                }
+                if ui.button("🗑 Delete  Del").clicked() {
+                    ui_state.delete_entity_requested = true;
                     ui.close_menu();
                 }
                 ui.separator();
@@ -273,6 +328,21 @@ fn draw_menu_bar(
                     }
                 }
             }
+
+            // ── Scene name / dirty indicator (right-aligned) ─────────────
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let scene_text = if ui_state.scene_is_dirty {
+                    format!("● {}", ui_state.active_scene_name)
+                } else {
+                    ui_state.active_scene_name.clone()
+                };
+                let color = if ui_state.scene_is_dirty {
+                    egui::Color32::from_rgb(255, 200, 80)
+                } else {
+                    egui::Color32::from_rgb(160, 160, 160)
+                };
+                ui.label(egui::RichText::new(scene_text).color(color).small());
+            });
         });
     });
 }
@@ -441,3 +511,27 @@ fn draw_undo_history_window(
     }
 }
 
+
+// ────────────────────────────────────────────────────────────────────────────
+// Dispatch deferred UI action requests (flags set by draw_menu_bar)
+// ────────────────────────────────────────────────────────────────────────────
+
+fn dispatch_ui_requests(
+    mut ui_state: ResMut<EditorUiState>,
+    focused:      Res<FocusedEntity>,
+    mut delete_ev: EventWriter<DeleteEntityRequest>,
+    mut dup_ev:   EventWriter<DuplicateEntityRequest>,
+) {
+    if ui_state.delete_entity_requested {
+        ui_state.delete_entity_requested = false;
+        if let Some(entity) = focused.0 {
+            delete_ev.send(DeleteEntityRequest(entity));
+        }
+    }
+    if ui_state.duplicate_entity_requested {
+        ui_state.duplicate_entity_requested = false;
+        if let Some(entity) = focused.0 {
+            dup_ev.send(DuplicateEntityRequest(entity));
+        }
+    }
+}
