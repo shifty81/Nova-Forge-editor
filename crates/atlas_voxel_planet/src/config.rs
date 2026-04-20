@@ -150,3 +150,18 @@ pub const TREE_PROB_FOREST: f32 = TREE_SPAWN_CHANCE * 80.0;
 pub const TREE_PROB_PLAINS: f32 = TREE_SPAWN_CHANCE * 30.0;
 pub const TREE_PROB_DESERT: f32 = TREE_SPAWN_CHANCE * 10.0;
 pub const TREE_PROB_TUNDRA: f32 = TREE_SPAWN_CHANCE *  8.0;
+
+// ============================================================
+//  CAVE CONFIGURATION
+// ============================================================
+
+/// 3-D noise frequency used for cave carving.  Higher values = more, smaller caves.
+pub const CAVE_NOISE_SCALE: f64 = 0.06;
+
+/// Threshold above which the cave noise is considered "air" (cave).
+/// Range 0–1; higher = fewer, more selective caves.
+pub const CAVE_THRESHOLD: f32 = 0.65;
+
+/// Minimum voxel depth below the terrain surface before caves can appear (voxels).
+/// Prevents caves from breaking through to the surface.
+pub const CAVE_MIN_DEPTH: u32 = 4;

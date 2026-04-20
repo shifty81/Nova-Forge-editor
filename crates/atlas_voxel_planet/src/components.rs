@@ -260,6 +260,14 @@ pub struct WorldSettings {
     pub tree_spawn_chance:  f32,
     /// Probability that a suitable voxel gets a grass blade.
     pub grass_spawn_chance: f32,
+
+    // ── Caves ────────────────────────────────────────────────────────────────
+    /// Whether underground cave carving is enabled.
+    pub cave_enabled:    bool,
+    /// 3-D noise frequency for cave shapes (higher = more, smaller caves).
+    pub cave_scale:      f64,
+    /// Noise threshold above which a voxel is carved to Air (0–1).
+    pub cave_threshold:  f32,
 }
 
 impl Default for WorldSettings {
@@ -276,6 +284,9 @@ impl Default for WorldSettings {
             vegetation_radius:    VEGETATION_RADIUS,
             tree_spawn_chance:    TREE_SPAWN_CHANCE,
             grass_spawn_chance:   GRASS_SPAWN_CHANCE,
+            cave_enabled:         true,
+            cave_scale:           CAVE_NOISE_SCALE,
+            cave_threshold:       CAVE_THRESHOLD,
         }
     }
 }
