@@ -95,7 +95,8 @@ pub fn update_space_hud(
             let d = (tf.translation - player_pos).length();
             (d, name.as_str().to_owned())
         })
-        .min_by(|(da, _), (db, _)| da.partial_cmp(db).unwrap_or(std::cmp::Ordering::Equal));
+        .filter(|(d, _)| d.is_finite())
+        .min_by(|(da, _), (db, _)| da.total_cmp(db));
 
     let nearest_str = if let Some((dist, name)) = nearest {
         let dist_km = dist / 1_000.0;

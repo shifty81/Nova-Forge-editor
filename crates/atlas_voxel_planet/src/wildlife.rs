@@ -61,6 +61,9 @@ pub struct CreatureAI {
 //  Spawn system
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Small upward offset (metres) added to the terrain radius when placing a
+/// creature so feet don't clip the surface.
+const CREATURE_SURFACE_OFFSET: f32 = 0.02;
 /// Maximum number of creatures allowed near the player at once.
 const MAX_CREATURES: usize = 20;
 /// Radius (m) within which creatures are kept alive.
@@ -105,6 +108,7 @@ pub fn spawn_wildlife_around_player(
     if existing >= MAX_CREATURES { return; }
 
     let mut rng = rand::thread_rng();
+    let mut spawned_this_frame: usize = 0;
 
     let ref_right = if local_up.abs().dot(Vec3::X) < 0.9 {
         Vec3::X.cross(local_up).normalize()
@@ -114,7 +118,7 @@ pub fn spawn_wildlife_around_player(
     let ref_fwd = local_up.cross(ref_right).normalize();
 
     for _ in 0..SPAWN_ATTEMPTS_PER_FRAME {
-        if existing + 1 >= MAX_CREATURES { break; }
+        if existing + spawned_this_frame >= MAX_CREATURES { break; }
 
         let angle  = rng.gen_range(0.0f32..2.0 * PI);
         let spread = rng.gen_range(MIN_SPAWN_DIST..spawn_r);
@@ -131,8 +135,9 @@ pub fn spawn_wildlife_around_player(
         let kind_opt = creature_for_biome(biome, &mut rng);
         let Some(kind) = kind_opt else { continue };
 
-        let pos = cand_dir * (surface_r + creature_foot_offset(kind));
+        let pos = cand_dir * (surface_r + CREATURE_SURFACE_OFFSET);
         spawn_creature(&mut commands, &mut meshes, &mut materials, pos, cand_dir, kind, &mut rng);
+        spawned_this_frame += 1;
     }
 }
 
@@ -158,16 +163,6 @@ fn creature_for_biome(biome: Biome, rng: &mut impl Rng) -> Option<CreatureKind> 
             if roll < 0.006 { Some(CreatureKind::PolarBear) } else { None }
         }
         _ => None,
-    }
-}
-
-/// Vertical offset from the terrain surface to the creature's feet (m).
-fn creature_foot_offset(kind: CreatureKind) -> f32 {
-    match kind {
-        CreatureKind::Deer     => 0.0,
-        CreatureKind::Rabbit   => 0.0,
-        CreatureKind::Camel    => 0.0,
-        CreatureKind::PolarBear => 0.0,
     }
 }
 
@@ -325,15 +320,17 @@ pub fn update_creature_ai(
         // Snap back to terrain surface.
         let new_dir   = new_pos_flat.normalize();
         let surface_r = terrain_radius_at(new_dir, seed.0);
-        tf.translation = new_dir * (surface_r + 0.01);
+        tf.translation = new_dir * (surface_r + CREATURE_SURFACE_OFFSET);
 
         // ── Orient to surface + face movement direction ───────────────────────
+        // right-hand rule: right = up × forward so local-X points right,
+        // local-Y points away from planet, local-Z points in movement direction.
         let new_up  = tf.translation.normalize_or_zero();
         let fwd_vec = move_dir - new_up * move_dir.dot(new_up);
         if fwd_vec.length_squared() > 1e-6 {
             let fwd_n = fwd_vec.normalize();
-            let right = fwd_n.cross(new_up).normalize();
-            tf.rotation = Quat::from_mat3(&Mat3::from_cols(right, new_up, -fwd_n));
+            let right = new_up.cross(fwd_n).normalize();
+            tf.rotation = Quat::from_mat3(&Mat3::from_cols(right, new_up, fwd_n));
         }
     }
 }
