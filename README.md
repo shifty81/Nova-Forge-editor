@@ -90,6 +90,7 @@ The runtime voxel game is the primary *example scene* shipped inside the editor.
 | **1–9** | Select hotbar slot |
 | **Scroll wheel** | Cycle hotbar slot |
 | **C** | Open / close crafting panel |
+| **E** | Interact with nearest NPC (open/close dialogue) |
 | **Escape** | Release / lock cursor |
 
 ---
@@ -164,6 +165,44 @@ Up to 8 structures spawn biome-appropriately around the player and despawn when 
 | Watch Tower | Savanna / Mountain |
 | Ice Hut | Arctic / Snow Peak |
 | Ruin | Any land biome |
+
+---
+
+## 🗣️ NPC Dialogue & Quest System
+
+Up to 6 biome-appropriate NPCs spawn near the player.  Walk within 4 m and press **E** to talk.
+
+| NPC | Biomes | Quest |
+|-----|--------|-------|
+| Elara (Trader) | Plains / Forest | Gravel Run: deliver 5× Gravel → 4× Sandstone |
+| Borin (Hermit) | Tundra / Mountain | Stone Supply: deliver 6× Stone → 2× Crystal |
+| Zara (Nomad) | Desert / Savanna | Sand Dunes: deliver 8× Sand → 2× Obsidian |
+| Cael (Fisherman) | Beach / ShallowOcean | Snowball Supply: deliver 4× Snow → 6× Gravel |
+| Vira (Explorer) | Arctic / SnowPeak | Crystal Cache: deliver 3× Crystal → 10× Stone |
+
+- Talking to an NPC **activates** their quest.
+- Collect the required items and talk again to **turn in** and receive the reward.
+- The dialogue panel shows quest progress (current / required count).
+
+---
+
+## 🎵 Biome-Specific Ambient Audio
+
+A looping ambient track plays based on the player's current biome and cross-fades
+(2.5 s fade) when the biome changes.
+
+| Track file (`assets/audio/ambient/`) | Plays in biome |
+|--------------------------------------|----------------|
+| `plains.ogg` | Plains |
+| `forest.ogg` | Forest / Tropical Forest |
+| `desert.ogg` | Desert / Savanna |
+| `arctic.ogg` | Arctic / Tundra / Snow Peak |
+| `mountain.ogg` | Mountain |
+| `ocean.ogg` | Beach / Ocean |
+| `space.ogg` | Above atmosphere |
+
+Place OGG Vorbis files in `assets/audio/ambient/` to activate audio.
+Missing files are handled gracefully — the game runs silently without them.
 
 ---
 
@@ -279,10 +318,12 @@ crates/
 │   ├── src/wildlife.rs         —   Creature AI spawning (biome-matched, wander)
 │   ├── src/inventory.rs        —   Hotbar, voxel break/place (G/B), HUD
 │   ├── src/crafting.rs         —   C-key crafting panel, recipe list, ingredient/output transfers
+│   ├── src/npc.rs              —   NPC spawn/dialogue (E key), QuestLog with 5 quests
 │   ├── src/structures.rs       —   Procedural huts, towers, ruins
 │   ├── src/multiplayer.rs      —   LAN UDP host/client, RemotePlayer sync
 │   ├── src/hud.rs              —   Ground HUD (time/weather/health/stamina) + Space HUD
 │   ├── src/minimap.rs          —   64×64 dynamic biome-colour minimap texture
+│   ├── src/ambient_audio.rs    —   Biome-specific looping audio with cross-fade
 │   ├── src/world_io.rs         —   Binary .voxelworld save / load
 │   └── src/config.rs           —   All tunable constants
 │
@@ -335,7 +376,7 @@ project/                        — Editor project directory (scenes, prefabs, c
 
 - ~~Crafting system (recipe-based item combining)~~ ✅ implemented (`crafting.rs`)
 - ~~Minimap overlay~~ ✅ implemented (`minimap.rs`)
-- NPC dialogue / quest system
+- ~~NPC dialogue / quest system~~ ✅ implemented (`npc.rs`)
+- ~~Biome-specific ambient audio~~ ✅ implemented (`ambient_audio.rs`)
 - Dedicated server mode (authoritative host, client-side prediction)
 - glTF character model swap (replace procedural body with an animated mesh)
-- Biome-specific ambient audio
