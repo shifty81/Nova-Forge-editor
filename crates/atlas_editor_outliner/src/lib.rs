@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use atlas_editor_core::{DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EntityLabel};
+use atlas_editor_core::{DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EditorPanelOrder, EntityLabel};
 use atlas_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 use atlas_voxel_planet::{
     ChunkManager, GrassDecoration, Moon, Planet, Player, Sun, Tree, VoxelChunk, WeatherParticle,
@@ -44,7 +44,9 @@ impl Plugin for EditorOutlinerPlugin {
             .init_resource::<VoxelCounts>()
             .add_systems(
                 Update,
-                (collect_voxel_counts, draw_outliner_panel).chain(),
+                (collect_voxel_counts, draw_outliner_panel)
+                    .chain()
+                    .in_set(EditorPanelOrder::Sides),
             );
     }
 }

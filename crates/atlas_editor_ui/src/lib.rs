@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use atlas_editor_core::{
-    DeleteEntityRequest, DuplicateEntityRequest, EditorMode,
+    DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EditorPanelOrder,
     PrimitiveKind, RequestEditorMode, SpawnEntityRequest,
 };
 use atlas_editor_scene::{NewSceneRequest, OpenSceneRequest, SaveSceneRequest};
@@ -62,15 +62,22 @@ impl Plugin for EditorUiPlugin {
             .init_resource::<EditorUiState>()
             .add_systems(
                 Update,
-                (
-                    keyboard_shortcuts,
-                    sync_ui_state,
-                    draw_menu_bar,
-                    draw_snap_toolbar,
-                    draw_undo_history_window,
-                    dispatch_ui_requests,
-                )
-                    .chain(),
+                // Pre-panel: read input and sync cached state before any egui draw.
+                (keyboard_shortcuts, sync_ui_state)
+                    .chain()
+                    .before(EditorPanelOrder::Top),
+            )
+            .add_systems(
+                Update,
+                // Top panels: menu bar + snap toolbar (must precede side/central panels).
+                (draw_menu_bar, draw_snap_toolbar, draw_undo_history_window)
+                    .chain()
+                    .in_set(EditorPanelOrder::Top),
+            )
+            .add_systems(
+                Update,
+                // Post-panel: dispatch any deferred entity requests after all drawing.
+                dispatch_ui_requests.after(EditorPanelOrder::Central),
             );
     }
 }

@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use atlas_assets::{AssetRegistry, AssetKind};
-use atlas_editor_core::EditorMode;
+use atlas_editor_core::{EditorMode, EditorPanelOrder};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Plugin
@@ -13,7 +13,7 @@ pub struct EditorContentPlugin;
 
 impl Plugin for EditorContentPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, draw_content_panel);
+        app.add_systems(Update, draw_content_panel.in_set(EditorPanelOrder::Bottom));
     }
 }
 
