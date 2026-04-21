@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy::log::tracing_subscriber::{self, Layer, registry::LookupSpan};
 use bevy_egui::{egui, EguiContexts};
-use atlas_editor_core::EditorMode;
+use atlas_editor_core::{EditorMode, EditorPanelOrder};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Log record
@@ -167,7 +167,11 @@ impl Plugin for EditorLogPlugin {
         }
         app
             .add_event::<ClearOutputLog>()
-            .add_systems(Update, (drain_log_bridge, handle_clear_log, draw_log_panel).chain());
+            .add_systems(Update, (drain_log_bridge, handle_clear_log).chain())
+            .add_systems(
+                Update,
+                draw_log_panel.in_set(EditorPanelOrder::Bottom),
+            );
     }
 }
 

@@ -6,6 +6,32 @@ use atlas_commands::{EditorCommand, EditorCommandContext, CommandHistory};
 use atlas_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 
 // ────────────────────────────────────────────────────────────────────────────
+// egui panel draw-order system set
+// ────────────────────────────────────────────────────────────────────────────
+
+/// System-set labels used to sequence egui panel draws in the correct order.
+///
+/// egui requires panels to be created in this sequence each frame:
+/// 1. Top panels (menu bar, snap toolbar)
+/// 2. Bottom panels (output log, content browser)
+/// 3. Side panels (outliner, details, voxel tools)
+/// 4. Central panel (viewport — must be last to claim remaining space)
+///
+/// Any system that calls `EguiContexts::ctx_mut()` and adds a panel should
+/// be placed in the appropriate variant with `.in_set(EditorPanelOrder::…)`.
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone, Copy)]
+pub enum EditorPanelOrder {
+    /// `TopBottomPanel::top` — menu bar, snap toolbar.
+    Top,
+    /// `TopBottomPanel::bottom` — output log, content browser.
+    Bottom,
+    /// `SidePanel::left` / `SidePanel::right` — outliner, details, voxel tools.
+    Sides,
+    /// `CentralPanel::default` — viewport overlay. **Must run last.**
+    Central,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Shared entity metadata
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -146,6 +172,18 @@ impl Plugin for EditorCorePlugin {
     fn build(&self, app: &mut App) {
         app
             .init_state::<EditorMode>()
+            // Enforce the egui panel draw order so the CentralPanel (viewport)
+            // is always added last and never starves side/bottom panels of space.
+            .configure_sets(
+                Update,
+                (
+                    EditorPanelOrder::Top,
+                    EditorPanelOrder::Bottom,
+                    EditorPanelOrder::Sides,
+                    EditorPanelOrder::Central,
+                )
+                    .chain(),
+            )
             .add_event::<RequestEditorMode>()
             .add_event::<RefreshPanels>()
             .add_event::<SpawnEntityRequest>()

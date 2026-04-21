@@ -19,7 +19,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts};
 use atlas_commands::{CommandHistory, EditorCommand, EditorCommandContext};
-use atlas_editor_core::{EditorCamera, EditorMode};
+use atlas_editor_core::{EditorCamera, EditorMode, EditorPanelOrder};
 use atlas_voxel_planet::{
     biome::Voxel, ChunkDirty, ChunkManager, ManuallyEdited, VoxelChunk, VoxelData,
     CHUNK_SIZE, VOXEL_SIZE,
@@ -167,11 +167,13 @@ impl Plugin for VoxelToolsPlugin {
             .init_resource::<ActiveStroke>()
             .add_systems(
                 Update,
-                (
-                    draw_voxel_palette_panel,
-                    voxel_edit_system,
-                )
-                    .run_if(in_state(EditorMode::Editing)),
+                draw_voxel_palette_panel
+                    .run_if(in_state(EditorMode::Editing))
+                    .in_set(EditorPanelOrder::Sides),
+            )
+            .add_systems(
+                Update,
+                voxel_edit_system.run_if(in_state(EditorMode::Editing)),
             );
     }
 }

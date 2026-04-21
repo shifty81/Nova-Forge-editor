@@ -16,7 +16,7 @@ use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts};
-use atlas_editor_core::{EditorCamera, EditorMode, EntityLabel};
+use atlas_editor_core::{EditorCamera, EditorMode, EditorPanelOrder, EntityLabel};
 use atlas_gizmos::{GizmoInteraction, GizmoMode};
 use atlas_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 use atlas_voxel_planet::{ChunkManager, ChunkViewpoint, VoxelChunk, CHUNK_SIZE, PLANET_RADIUS, SUN_DISTANCE, VOXEL_SIZE};
@@ -87,10 +87,17 @@ impl Plugin for EditorViewportPlugin {
                     update_chunk_viewpoint_from_editor_camera,
                     viewport_mouse_pick,
                     update_editor_camera,
-                    draw_viewport_panel,
                 )
                     .chain()
                     .run_if(in_state(EditorMode::Editing)),
+            )
+            .add_systems(
+                Update,
+                // draw_viewport_panel creates a CentralPanel that consumes all remaining
+                // space; it must run after every SidePanel and TopBottomPanel is drawn.
+                draw_viewport_panel
+                    .run_if(in_state(EditorMode::Editing))
+                    .in_set(EditorPanelOrder::Central),
             );
     }
 }
