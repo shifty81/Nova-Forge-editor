@@ -66,6 +66,13 @@ pub struct GrassDecoration;
 #[derive(Component)]
 pub struct WeatherParticle;
 
+/// Marker for top-level gameplay UI nodes (HUD, minimap, hotbar, crafting
+/// panel, dialogue panel).  The editor shell toggles the [`Visibility`] of
+/// all entities carrying this marker based on [`EditorMode`] so gameplay UI
+/// isn't rendered on top of editor panels while in Editing mode.
+#[derive(Component, Default)]
+pub struct GameplayUiRoot;
+
 /// The directional light representing the sun.
 #[derive(Component)]
 pub struct SunLight;

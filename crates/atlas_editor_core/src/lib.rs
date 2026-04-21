@@ -13,9 +13,13 @@ use atlas_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 ///
 /// egui requires panels to be created in this sequence each frame:
 /// 1. Top panels (menu bar, snap toolbar)
-/// 2. Bottom panels (output log, content browser)
-/// 3. Side panels (outliner, details, voxel tools)
+/// 2. Bottom panels (output log, then content browser)
+/// 3. Side panels (outliner on the left, then details, then voxel tools on the right)
 /// 4. Central panel (viewport — must be last to claim remaining space)
+///
+/// The sub-sets (`BottomLog`, `BottomContent`, `SidesLeft`, `SidesRightDetails`,
+/// `SidesRightTools`) are chained deterministically to eliminate pixel-edge
+/// flicker caused by non-deterministic intra-set ordering.
 ///
 /// Any system that calls `EguiContexts::ctx_mut()` and adds a panel should
 /// be placed in the appropriate variant with `.in_set(EditorPanelOrder::…)`.
@@ -23,10 +27,16 @@ use atlas_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 pub enum EditorPanelOrder {
     /// `TopBottomPanel::top` — menu bar, snap toolbar.
     Top,
-    /// `TopBottomPanel::bottom` — output log, content browser.
-    Bottom,
-    /// `SidePanel::left` / `SidePanel::right` — outliner, details, voxel tools.
-    Sides,
+    /// `TopBottomPanel::bottom` — output log.
+    BottomLog,
+    /// `TopBottomPanel::bottom` — content browser.
+    BottomContent,
+    /// `SidePanel::left` — outliner.
+    SidesLeft,
+    /// `SidePanel::right` — details panel.
+    SidesRightDetails,
+    /// `SidePanel::right` — voxel tools palette.
+    SidesRightTools,
     /// `CentralPanel::default` — viewport overlay. **Must run last.**
     Central,
 }
@@ -42,6 +52,66 @@ pub struct EntityLabel(pub String);
 /// Marks the camera used by the editor viewport.
 #[derive(Component)]
 pub struct EditorCamera;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shared viewport / layout resources
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Logical-pixel rectangle (in window coordinates) currently occupied by the
+/// central viewport area — i.e. the space **not** covered by any egui panel.
+///
+/// Written each frame by `atlas_editor_viewport::draw_viewport_panel` and read
+/// by `sync_camera_viewport` to restrict the 3D camera to that rect.  Stored
+/// here (in `atlas_editor_core`) so downstream projects — e.g. Nova Forge —
+/// can depend on a stable API without pulling in the viewport crate.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct ViewportRect {
+    /// Top-left corner, in logical window pixels.
+    pub min: Vec2,
+    /// Bottom-right corner, in logical window pixels.
+    pub max: Vec2,
+    /// egui `pixels_per_point` captured the same frame this rect was written.
+    pub scale_factor: f32,
+}
+
+impl Default for ViewportRect {
+    fn default() -> Self {
+        Self { min: Vec2::ZERO, max: Vec2::ZERO, scale_factor: 1.0 }
+    }
+}
+
+impl ViewportRect {
+    pub fn width(&self)  -> f32 { (self.max.x - self.min.x).max(0.0) }
+    pub fn height(&self) -> f32 { (self.max.y - self.min.y).max(0.0) }
+    pub fn is_empty(&self) -> bool { self.width() <= 0.5 || self.height() <= 0.5 }
+}
+
+/// Per-panel visibility flags toggled from the View menu.  Every panel's draw
+/// system early-returns when its flag is `false`.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PanelVisibility {
+    pub outliner:        bool,
+    pub details:         bool,
+    pub content_browser: bool,
+    pub output_log:      bool,
+    pub world_settings:  bool,
+    pub voxel_tools:     bool,
+    pub snap_toolbar:    bool,
+}
+
+impl Default for PanelVisibility {
+    fn default() -> Self {
+        Self {
+            outliner:        true,
+            details:         true,
+            content_browser: true,
+            output_log:      true,
+            world_settings:  true,
+            voxel_tools:     true,
+            snap_toolbar:    true,
+        }
+    }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Editor mode state machine
@@ -172,14 +242,22 @@ impl Plugin for EditorCorePlugin {
     fn build(&self, app: &mut App) {
         app
             .init_state::<EditorMode>()
+            // Shared layout resources — consumed by viewport + View menu.
+            .init_resource::<ViewportRect>()
+            .init_resource::<PanelVisibility>()
             // Enforce the egui panel draw order so the CentralPanel (viewport)
             // is always added last and never starves side/bottom panels of space.
+            // The chain spans the granular sub-sets so intra-panel order is
+            // deterministic every frame — prevents 1px edge flicker.
             .configure_sets(
                 Update,
                 (
                     EditorPanelOrder::Top,
-                    EditorPanelOrder::Bottom,
-                    EditorPanelOrder::Sides,
+                    EditorPanelOrder::BottomLog,
+                    EditorPanelOrder::BottomContent,
+                    EditorPanelOrder::SidesLeft,
+                    EditorPanelOrder::SidesRightDetails,
+                    EditorPanelOrder::SidesRightTools,
                     EditorPanelOrder::Central,
                 )
                     .chain(),

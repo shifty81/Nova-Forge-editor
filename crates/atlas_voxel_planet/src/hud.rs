@@ -46,17 +46,20 @@ pub struct GroundHudText;
 
 fn setup_space_hud(mut commands: Commands) {
     // Root node: anchored to the top-right corner.
-    commands.spawn(NodeBundle {
-        style: Style {
-            position_type: PositionType::Absolute,
-            top:   Val::Px(12.0),
-            right: Val::Px(16.0),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexEnd,
+    commands.spawn((
+        NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                top:   Val::Px(12.0),
+                right: Val::Px(16.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                ..default()
+            },
             ..default()
         },
-        ..default()
-    })
+        crate::components::GameplayUiRoot,
+    ))
     .with_children(|parent| {
         parent.spawn((
             TextBundle::from_section(
@@ -74,18 +77,21 @@ fn setup_space_hud(mut commands: Commands) {
 
 fn setup_ground_hud(mut commands: Commands) {
     // Root node: anchored to the top-left corner.
-    commands.spawn(NodeBundle {
-        style: Style {
-            position_type: PositionType::Absolute,
-            top:   Val::Px(12.0),
-            left:  Val::Px(16.0),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexStart,
-            row_gap: Val::Px(4.0),
+    commands.spawn((
+        NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                top:   Val::Px(12.0),
+                left:  Val::Px(16.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: Val::Px(4.0),
+                ..default()
+            },
             ..default()
         },
-        ..default()
-    })
+        crate::components::GameplayUiRoot,
+    ))
     .with_children(|parent| {
         parent.spawn((
             TextBundle::from_section(

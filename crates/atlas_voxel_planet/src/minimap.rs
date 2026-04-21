@@ -92,19 +92,22 @@ pub fn setup_minimap(
     res.image_handle = images.add(img);
 
     // ── Outer border node ────────────────────────────────────────────────────
-    let border = commands.spawn(NodeBundle {
-        style: Style {
-            position_type: PositionType::Absolute,
-            bottom:        Val::Px(80.0),   // above the hotbar
-            right:         Val::Px(12.0),
-            width:         Val::Px(MINIMAP_DISPLAY_PX + 6.0),
-            height:        Val::Px(MINIMAP_DISPLAY_PX + 6.0),
-            padding:       UiRect::all(Val::Px(3.0)),
+    let border = commands.spawn((
+        NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                bottom:        Val::Px(80.0),   // above the hotbar
+                right:         Val::Px(12.0),
+                width:         Val::Px(MINIMAP_DISPLAY_PX + 6.0),
+                height:        Val::Px(MINIMAP_DISPLAY_PX + 6.0),
+                padding:       UiRect::all(Val::Px(3.0)),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.70)),
             ..default()
         },
-        background_color: BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.70)),
-        ..default()
-    }).id();
+        crate::components::GameplayUiRoot,
+    )).id();
 
     // ── Image node ───────────────────────────────────────────────────────────
     let img_node = commands.spawn((

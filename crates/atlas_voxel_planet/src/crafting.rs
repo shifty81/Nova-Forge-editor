@@ -224,6 +224,7 @@ fn setup_crafting_ui(mut commands: Commands) {
             ..default()
         },
         CraftingPanel,
+        crate::components::GameplayUiRoot,
     )).id();
 
     // ── Header ───────────────────────────────────────────────────────────────

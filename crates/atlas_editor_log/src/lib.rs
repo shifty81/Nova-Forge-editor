@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy::log::tracing_subscriber::{self, Layer, registry::LookupSpan};
 use bevy_egui::{egui, EguiContexts};
-use atlas_editor_core::{EditorMode, EditorPanelOrder};
+use atlas_editor_core::{EditorMode, EditorPanelOrder, PanelVisibility};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Log record
@@ -44,6 +44,43 @@ pub struct LogRecord {
 
 type SharedBuf = Arc<Mutex<Vec<(LogLevel, String)>>>;
 
+/// Shared suppression counter for noisy Vulkan validation messages.
+/// Reports a summary every `VULKAN_SUPPRESS_REPORT_INTERVAL` occurrences so the
+/// Output Log doesn't churn on every frame on affected drivers.
+type VulkanSuppressState = Arc<Mutex<VulkanSuppressCounter>>;
+
+#[derive(Default)]
+struct VulkanSuppressCounter {
+    /// Total suppressed since the last summary message was emitted.
+    suppressed: u64,
+    /// Total suppressed ever (used only for reporting).
+    total: u64,
+    /// Have we emitted the first "example" line yet?
+    seen_example: bool,
+}
+
+/// Emit a "(N suppressed)" summary after this many matching events.
+const VULKAN_SUPPRESS_REPORT_INTERVAL: u64 = 500;
+
+/// Tracing targets / message markers we collapse.  Match both the target
+/// (Vulkan validation layer spam routes through `wgpu_hal::vulkan::instance`
+/// on affected drivers) and the specific VUID we know is a false-positive /
+/// upstream-fixed issue in Bevy 0.14's wgpu.
+const VULKAN_SUPPRESS_MARKERS: &[&str] = &[
+    "VUID-vkQueueSubmit-pSignalSemaphores-00067",
+];
+
+fn is_vulkan_suppress_target(target: &str) -> bool {
+    // Vulkan validation warnings route through the wgpu Vulkan HAL on affected
+    // drivers.  We intentionally only match Vulkan — other wgpu backends (DX12,
+    // Metal) don't emit this VUID.
+    target.starts_with("wgpu_hal::vulkan")
+}
+
+fn is_vulkan_suppress_message(msg: &str) -> bool {
+    VULKAN_SUPPRESS_MARKERS.iter().any(|m| msg.contains(m))
+}
+
 /// Bevy resource that holds the bridge buffer.  The `drain_log_bridge` system
 /// drains it each frame into [`OutputLog`].
 #[derive(Resource, Clone)]
@@ -55,6 +92,7 @@ pub struct LogBridge(SharedBuf);
 
 pub struct EditorLogLayer {
     buf: SharedBuf,
+    vulkan_suppress: VulkanSuppressState,
 }
 
 /// Minimal visitor that extracts only the `message` field from a tracing event.
@@ -89,6 +127,50 @@ impl<S: tracing::Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EditorLogLaye
             visitor.0
         };
 
+        // ── Suppress the Vulkan VUID storm ────────────────────────────────
+        // On some drivers wgpu emits this validation error every presented
+        // frame; letting it through turns the Output Log panel into a
+        // constantly-churning block of red text that reads as UI flicker.
+        let target = event.metadata().target();
+        if is_vulkan_suppress_target(target) && is_vulkan_suppress_message(&msg) {
+            if let Ok(mut state) = self.vulkan_suppress.lock() {
+                state.suppressed = state.suppressed.saturating_add(1);
+                state.total      = state.total.saturating_add(1);
+
+                // Emit one representative example the first time we see it,
+                // then every N occurrences emit a "(N suppressed)" summary.
+                let mut summary: Option<(LogLevel, String)> = None;
+                if !state.seen_example {
+                    state.seen_example = true;
+                    summary = Some((
+                        LogLevel::Warning,
+                        format!(
+                            "{msg}  (further occurrences of VUID-…-00067 are suppressed — \
+                             driver-level wgpu/Vulkan semaphore-reuse warning, tracked upstream)"
+                        ),
+                    ));
+                    // First example doesn't count toward the next summary.
+                    state.suppressed = state.suppressed.saturating_sub(1);
+                } else if state.suppressed >= VULKAN_SUPPRESS_REPORT_INTERVAL {
+                    let n = state.suppressed;
+                    state.suppressed = 0;
+                    summary = Some((
+                        LogLevel::Info,
+                        format!("(suppressed {n} further Vulkan validation messages; total {})", state.total),
+                    ));
+                }
+
+                if let Some(record) = summary {
+                    if let Ok(mut guard) = self.buf.lock() {
+                        if guard.len() < 4_000 {
+                            guard.push(record);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         if let Ok(mut guard) = self.buf.lock() {
             // Hard cap inside the layer to avoid unbounded growth between drains.
             if guard.len() < 4_000 {
@@ -111,8 +193,10 @@ pub fn build_editor_log_layer(
     app: &mut App,
 ) -> Option<Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync + 'static>> {
     let buf: SharedBuf = Arc::new(Mutex::new(Vec::new()));
+    let vulkan_suppress: VulkanSuppressState =
+        Arc::new(Mutex::new(VulkanSuppressCounter::default()));
     app.insert_resource(LogBridge(buf.clone()));
-    Some(Box::new(EditorLogLayer { buf }))
+    Some(Box::new(EditorLogLayer { buf, vulkan_suppress }))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -170,7 +254,7 @@ impl Plugin for EditorLogPlugin {
             .add_systems(Update, (drain_log_bridge, handle_clear_log).chain())
             .add_systems(
                 Update,
-                draw_log_panel.in_set(EditorPanelOrder::Bottom),
+                draw_log_panel.in_set(EditorPanelOrder::BottomLog),
             );
     }
 }
@@ -214,8 +298,12 @@ fn draw_log_panel(
     mut log:      ResMut<OutputLog>,
     mut clear_ev: EventWriter<ClearOutputLog>,
     mode:         Res<State<EditorMode>>,
+    visibility:   Res<PanelVisibility>,
 ) {
     if *mode.get() != EditorMode::Editing {
+        return;
+    }
+    if !visibility.output_log {
         return;
     }
 

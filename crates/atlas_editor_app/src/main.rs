@@ -13,7 +13,7 @@ use bevy::log::LogPlugin;
 use bevy::prelude::*;
 
 // ── Voxel planet engine ──────────────────────────────────────────────────────
-use atlas_voxel_planet::VoxelPlanetPlugins;
+use atlas_voxel_planet::{GameplayPlugins, WorldPlugins};
 
 // ── Shared infrastructure plugins ───────────────────────────────────────────
 use atlas_assets::AssetsPlugin;
@@ -51,6 +51,10 @@ fn main() {
             })
             .set(LogPlugin {
                 custom_layer: atlas_editor_log::build_editor_log_layer,
+                // Quiet the wgpu/Vulkan layers that emit validation spam every
+                // frame on some drivers — see `atlas_editor_log::EditorLogLayer`
+                // for the in-app VUID suppression.
+                filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn".to_string(),
                 ..default()
             })
         )
@@ -61,8 +65,17 @@ fn main() {
             EntityCountDiagnosticsPlugin,
         ))
 
-        // ── Voxel planet engine (world without player) ───────────────────────
-        .add_plugins(VoxelPlanetPlugins)
+        // ── Voxel planet engine ──────────────────────────────────────────────
+        // `WorldPlugins` = terrain / atmosphere / flora / fauna / world I/O —
+        // safe to have always on in the editor.
+        //
+        // `GameplayPlugins` = HUD, minimap, hotbar, crafting panel, dialogue,
+        // character rig, ambient audio, multiplayer.  Registered here so PIE
+        // can use them; `atlas_editor_play::toggle_gameplay_ui_visibility`
+        // hides their root UI nodes while in Editing mode so they don't fight
+        // the editor panels for screen space.
+        .add_plugins(WorldPlugins)
+        .add_plugins(GameplayPlugins)
 
         // ── Shared infrastructure ────────────────────────────────────────────
         .add_plugins((
