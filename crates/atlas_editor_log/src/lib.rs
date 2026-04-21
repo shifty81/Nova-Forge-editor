@@ -71,7 +71,10 @@ const VULKAN_SUPPRESS_MARKERS: &[&str] = &[
 ];
 
 fn is_vulkan_suppress_target(target: &str) -> bool {
-    target.starts_with("wgpu_hal::vulkan") || target.starts_with("wgpu_hal::auxil::dxgi")
+    // Vulkan validation warnings route through the wgpu Vulkan HAL on affected
+    // drivers.  We intentionally only match Vulkan — other wgpu backends (DX12,
+    // Metal) don't emit this VUID.
+    target.starts_with("wgpu_hal::vulkan")
 }
 
 fn is_vulkan_suppress_message(msg: &str) -> bool {

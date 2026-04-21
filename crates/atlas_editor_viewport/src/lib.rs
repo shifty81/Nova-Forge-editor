@@ -486,6 +486,14 @@ fn draw_viewport_panel(
 // Camera viewport sync
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Minimum clamp for `pixels_per_point` / window scale-factor values read
+/// from egui and winit.  Prevents division/scaling artefacts if either source
+/// ever reports 0 (e.g. during an early frame before window metrics are
+/// available).  Not user-facing — any positive value below normal DPI scales
+/// (typically 1.0–3.0) works; we pick a value small enough to never clamp a
+/// legitimate display and large enough to keep f32 math stable.
+const MIN_SCALE_FACTOR: f32 = 1.0e-4;
+
 /// Apply [`ViewportRect`] to the editor camera each frame so the 3D scene
 /// renders only inside the central panel area, not behind the surrounding
 /// egui panels.
@@ -523,7 +531,7 @@ fn sync_camera_viewport(
     let window_h = window.physical_height();
     if window_w == 0 || window_h == 0 { return; }
 
-    let scale = viewport_rect.scale_factor.max(0.0001);
+    let scale = viewport_rect.scale_factor.max(MIN_SCALE_FACTOR);
 
     // Logical → physical pixels, then clamp to window bounds.
     let min_x = ((viewport_rect.min.x * scale).max(0.0) as u32).min(window_w.saturating_sub(1));
