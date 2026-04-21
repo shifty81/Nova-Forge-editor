@@ -14,7 +14,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use atlas_editor_core::EditorMode;
+use atlas_editor_core::{EditorMode, PanelVisibility};
 use atlas_voxel_planet::{
     ChunkManager, NoiseSeed, RegenerateWorld, WeatherKind, WeatherState, WorldSettings, WorldTime,
     CAVE_MIN_DEPTH, DAY_LENGTH_SECONDS, FOG_END, FOG_START, GRAVITY_STRENGTH, PLANET_RADIUS,
@@ -46,8 +46,12 @@ fn draw_world_settings_panel(
     mut weather:    ResMut<WeatherState>,
     chunk_mgr:      Res<ChunkManager>,
     mut regen_ev:   EventWriter<RegenerateWorld>,
+    visibility:     Res<PanelVisibility>,
 ) {
     if *mode.get() != EditorMode::Editing {
+        return;
+    }
+    if !visibility.world_settings {
         return;
     }
 

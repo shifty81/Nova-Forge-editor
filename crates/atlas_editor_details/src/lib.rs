@@ -11,6 +11,7 @@ use bevy_egui::{egui, EguiContexts};
 use atlas_commands::TransformMovedEvent;
 use atlas_editor_core::{
     DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EditorPanelOrder, EntityLabel,
+    PanelVisibility,
 };
 use atlas_selection::FocusedEntity;
 use atlas_voxel_planet::{ChunkInfo, ChunkManager, NoiseSeed, VoxelChunk};
@@ -71,7 +72,7 @@ impl Plugin for EditorDetailsPlugin {
         app
             .init_resource::<DetailsRegistry>()
             .init_resource::<TransformDragState>()
-            .add_systems(Update, draw_details_panel.in_set(EditorPanelOrder::Sides));
+            .add_systems(Update, draw_details_panel.in_set(EditorPanelOrder::SidesRightDetails));
     }
 }
 
@@ -94,8 +95,12 @@ fn draw_details_panel(
     mut dup_ev:       EventWriter<DuplicateEntityRequest>,
     mut moved_ev:     EventWriter<TransformMovedEvent>,
     mut drag_state:   ResMut<TransformDragState>,
+    visibility:       Res<PanelVisibility>,
 ) {
     if *mode.get() != EditorMode::Editing {
+        return;
+    }
+    if !visibility.details {
         return;
     }
 

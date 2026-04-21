@@ -297,6 +297,7 @@ fn setup_inventory_hud(mut commands: Commands) {
             ..default()
         },
         HotbarRoot,
+        crate::components::GameplayUiRoot,
     )).id();
 
     for i in 0..HOTBAR_SLOTS {

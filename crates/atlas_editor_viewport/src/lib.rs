@@ -14,9 +14,10 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
+use bevy::render::camera::Viewport;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts};
-use atlas_editor_core::{EditorCamera, EditorMode, EditorPanelOrder, EntityLabel};
+use atlas_editor_core::{EditorCamera, EditorMode, EditorPanelOrder, EntityLabel, ViewportRect};
 use atlas_gizmos::{GizmoInteraction, GizmoMode};
 use atlas_selection::{FocusedEntity, SelectedEntities, SelectionChanged};
 use atlas_voxel_planet::{ChunkManager, ChunkViewpoint, VoxelChunk, CHUNK_SIZE, PLANET_RADIUS, SUN_DISTANCE, VOXEL_SIZE};
@@ -98,6 +99,15 @@ impl Plugin for EditorViewportPlugin {
                 draw_viewport_panel
                     .run_if(in_state(EditorMode::Editing))
                     .in_set(EditorPanelOrder::Central),
+            )
+            .add_systems(
+                Update,
+                // Apply the ViewportRect written by draw_viewport_panel to the
+                // 3D camera, so the scene is bounded to the central area
+                // instead of the entire window.  Must run after the Central
+                // panel has been drawn for the current frame.
+                sync_camera_viewport
+                    .after(EditorPanelOrder::Central),
             );
     }
 }
@@ -158,8 +168,36 @@ fn update_editor_camera(
     mut scroll_events: EventReader<MouseWheel>,
     mut teleport_ev:   EventReader<TeleportEditorCamera>,
     mut cam_q:         Query<(&mut Transform, &mut EditorCameraState), With<EditorCamera>>,
+    mut contexts:      EguiContexts,
 ) {
     let Ok((mut transform, mut state)) = cam_q.get_single_mut() else { return };
+
+    // Yield input to egui when the user is interacting with the UI — prevents
+    // WASD / scroll from bleeding through into the 3D camera while a text
+    // field is focused or the pointer is over a panel.
+    let (egui_wants_pointer, egui_wants_keyboard) = {
+        let ctx = contexts.ctx_mut();
+        (ctx.wants_pointer_input(), ctx.wants_keyboard_input())
+    };
+    if egui_wants_pointer || egui_wants_keyboard {
+        motion_events.clear();
+        scroll_events.clear();
+        // Still consume teleport events so they aren't lost.
+        for ev in teleport_ev.read() {
+            match ev {
+                TeleportEditorCamera::SolarSystem => {
+                    apply_teleport(&mut transform, &mut state,
+                        SOLAR_OVERVIEW_POS, SOLAR_OVERVIEW_PITCH, SOLAR_OVERVIEW_SPEED);
+                }
+                TeleportEditorCamera::PlanetSurface => {
+                    apply_teleport(&mut transform, &mut state,
+                        PLANET_OVERVIEW_POS, PLANET_OVERVIEW_PITCH, PLANET_OVERVIEW_SPEED);
+                }
+            }
+        }
+        return;
+    }
+
     let rmb = mouse_button.pressed(MouseButton::Right);
 
     // ── Teleport events (from View menu) ────────────────────────────────────
@@ -254,10 +292,14 @@ fn viewport_mouse_pick(
     mut focused:  ResMut<FocusedEntity>,
     mut selected: ResMut<SelectedEntities>,
     mut changed:  EventWriter<SelectionChanged>,
+    mut contexts: EguiContexts,
 ) {
     // Skip if a gizmo drag is active or no LMB click.
     if interaction.active { return; }
     if !buttons.just_pressed(MouseButton::Left) { return; }
+
+    // Yield picking to egui when the pointer is over an egui panel / widget.
+    if contexts.ctx_mut().wants_pointer_input() { return; }
 
     let Ok(window) = windows.get_single() else { return };
     let Ok((camera, cam_tf)) = camera_q.get_single() else { return };
@@ -343,72 +385,179 @@ fn ray_aabb(origin: Vec3, dir: Vec3, aabb_min: Vec3, aabb_max: Vec3) -> Option<f
 // ────────────────────────────────────────────────────────────────────────────
 
 fn draw_viewport_panel(
-    mut contexts: EguiContexts,
-    cam_q:        Query<(&Transform, &EditorCameraState), With<EditorCamera>>,
-    diagnostics:  Res<DiagnosticsStore>,
-    gizmo_mode:   Res<GizmoMode>,
+    mut contexts:      EguiContexts,
+    cam_q:             Query<(&Transform, &EditorCameraState), With<EditorCamera>>,
+    diagnostics:       Res<DiagnosticsStore>,
+    gizmo_mode:        Res<GizmoMode>,
+    mut viewport_rect: ResMut<ViewportRect>,
 ) {
     let ctx = contexts.ctx_mut();
 
-    egui::CentralPanel::default().show(ctx, |ui| {
-        // ── FPS / performance readout ─────────────────────────────────────
-        let fps = diagnostics
-            .get(&FrameTimeDiagnosticsPlugin::FPS)
-            .and_then(|d| d.smoothed())
-            .unwrap_or(0.0);
-        let frame_ms = diagnostics
-            .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
-            .and_then(|d| d.smoothed())
-            .unwrap_or(0.0)
-            * 1000.0;
+    // Transparent CentralPanel so the 3D render underneath shows through.
+    // The info overlay is drawn as a floating Area with its own background,
+    // so the rest of the central region stays clear.
+    let pixels_per_point = ctx.pixels_per_point();
+    egui::CentralPanel::default()
+        .frame(egui::Frame::none())
+        .show(ctx, |ui| {
+            let rect = ui.max_rect();
 
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(format!("{fps:.1} FPS  ({frame_ms:.2} ms)"))
-                    .color(egui::Color32::from_rgb(120, 220, 120)),
-            );
-            ui.separator();
-            ui.label(
-                egui::RichText::new(gizmo_mode.label())
-                    .color(egui::Color32::from_rgb(220, 180, 80)),
-            );
-            ui.separator();
-            ui.label(egui::RichText::new("EDITING").color(egui::Color32::from_rgb(80, 160, 255)).strong());
+            // Record the viewport rectangle (logical pixels) so
+            // sync_camera_viewport can clip the 3D camera to it.
+            viewport_rect.min = Vec2::new(rect.min.x, rect.min.y);
+            viewport_rect.max = Vec2::new(rect.max.x, rect.max.y);
+            viewport_rect.scale_factor = pixels_per_point;
+
+            // ── Info overlay: floating, anchored to the viewport top-left ─
+            let overlay_frame = egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(20, 24, 28, 200))
+                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                .rounding(egui::Rounding::same(4.0));
+
+            egui::Area::new(egui::Id::new("atlas_viewport_overlay"))
+                .fixed_pos(rect.min + egui::vec2(8.0, 8.0))
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    overlay_frame.show(ui, |ui| {
+                        // ── FPS / performance readout ─────────────────────
+                        let fps = diagnostics
+                            .get(&FrameTimeDiagnosticsPlugin::FPS)
+                            .and_then(|d| d.smoothed())
+                            .unwrap_or(0.0);
+                        let frame_ms = diagnostics
+                            .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+                            .and_then(|d| d.smoothed())
+                            .unwrap_or(0.0)
+                            * 1000.0;
+
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{fps:.1} FPS  ({frame_ms:.2} ms)"))
+                                    .color(egui::Color32::from_rgb(120, 220, 120)),
+                            );
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new(gizmo_mode.label())
+                                    .color(egui::Color32::from_rgb(220, 180, 80)),
+                            );
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new("EDITING")
+                                    .color(egui::Color32::from_rgb(80, 160, 255))
+                                    .strong(),
+                            );
+                        });
+
+                        // ── Camera info ───────────────────────────────────
+                        if let Ok((tf, state)) = cam_q.get_single() {
+                            let p     = tf.translation;
+                            let dist  = p.length();
+                            let alt_km = (dist - PLANET_RADIUS) / 1_000.0;
+                            let sun_dist_km = (p - Vec3::new(SUN_DISTANCE, 0.0, 0.0)).length() / 1_000.0;
+
+                            ui.horizontal(|ui| {
+                                ui.label(format!(
+                                    "Pos ({:.0}, {:.0}, {:.0})  alt {}{:.1} km  speed {:.0} m/s",
+                                    p.x, p.y, p.z,
+                                    if alt_km < 0.0 { "-" } else { "+" },
+                                    alt_km.abs(),
+                                    state.speed,
+                                ));
+                                ui.separator();
+                                ui.label(format!("☀  {:.0} km", sun_dist_km));
+                            });
+
+                            ui.label(
+                                egui::RichText::new(
+                                    "RMB+drag: look · WASD/QE: fly · scroll: speed  |  \
+                                     Home: solar system · End: planet surface  |  \
+                                     W/E/R: gizmo · G: grid"
+                                )
+                                .weak()
+                                .small(),
+                            );
+                        }
+                    });
+                });
         });
+}
 
-        // ── Camera info ───────────────────────────────────────────────────
-        if let Ok((tf, state)) = cam_q.get_single() {
-            let p     = tf.translation;
-            let dist  = p.length();
+// ────────────────────────────────────────────────────────────────────────────
+// Camera viewport sync
+// ────────────────────────────────────────────────────────────────────────────
 
-            // Altitude above sea level (negative if "inside" the planet).
-            let alt_km = (dist - PLANET_RADIUS) / 1_000.0;
-            // Distance to sun.
-            let sun_dist_km = (p - Vec3::new(SUN_DISTANCE, 0.0, 0.0)).length() / 1_000.0;
+/// Apply [`ViewportRect`] to the editor camera each frame so the 3D scene
+/// renders only inside the central panel area, not behind the surrounding
+/// egui panels.
+///
+/// When the rect is empty or we're not in Editing mode, the camera viewport
+/// is cleared so the scene renders full-window (the PIE runtime expects
+/// full-window rendering).
+fn sync_camera_viewport(
+    viewport_rect: Res<ViewportRect>,
+    windows:       Query<&Window, With<PrimaryWindow>>,
+    mode:          Res<State<EditorMode>>,
+    mut cam_q:     Query<&mut Camera, With<EditorCamera>>,
+) {
+    let Ok(mut camera) = cam_q.get_single_mut() else { return };
 
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "Pos ({:.0}, {:.0}, {:.0})  alt {}{:.1} km  speed {:.0} m/s",
-                    p.x, p.y, p.z,
-                    if alt_km < 0.0 { "-" } else { "+" },
-                    alt_km.abs(),
-                    state.speed,
-                ));
-                ui.separator();
-                ui.label(format!("☀  {:.0} km", sun_dist_km));
-            });
-
-            ui.label(
-                egui::RichText::new(
-                    "RMB+drag: look · WASD/QE: fly · scroll: speed  |  \
-                     Home: solar system · End: planet surface  |  \
-                     W/E/R: gizmo · G: grid"
-                )
-                .weak()
-                .small(),
-            );
+    // In PIE / Simulate the editor camera is inactive; game cameras render
+    // full-window.  Clear any viewport restriction so re-activation on Stop
+    // starts from a clean slate.
+    if *mode.get() != EditorMode::Editing {
+        if camera.viewport.is_some() {
+            camera.viewport = None;
         }
-    });
+        return;
+    }
+
+    if viewport_rect.is_empty() {
+        if camera.viewport.is_some() {
+            camera.viewport = None;
+        }
+        return;
+    }
+
+    let Ok(window) = windows.get_single() else { return };
+    let window_w = window.physical_width();
+    let window_h = window.physical_height();
+    if window_w == 0 || window_h == 0 { return; }
+
+    let scale = viewport_rect.scale_factor.max(0.0001);
+
+    // Logical → physical pixels, then clamp to window bounds.
+    let min_x = ((viewport_rect.min.x * scale).max(0.0) as u32).min(window_w.saturating_sub(1));
+    let min_y = ((viewport_rect.min.y * scale).max(0.0) as u32).min(window_h.saturating_sub(1));
+    let max_x = ((viewport_rect.max.x * scale).max(0.0) as u32).min(window_w);
+    let max_y = ((viewport_rect.max.y * scale).max(0.0) as u32).min(window_h);
+
+    if max_x <= min_x || max_y <= min_y {
+        // Degenerate — e.g. side panels cover the entire window.  Leave the
+        // camera alone rather than creating a 0-sized viewport (wgpu rejects).
+        return;
+    }
+
+    // Enforce a 1×1 minimum for safety.
+    let size_x = (max_x - min_x).max(1);
+    let size_y = (max_y - min_y).max(1);
+
+    let new_vp = Viewport {
+        physical_position: UVec2::new(min_x, min_y),
+        physical_size:     UVec2::new(size_x, size_y),
+        depth:             0.0..1.0,
+    };
+
+    // Only write when something changed, to avoid touching Camera every frame.
+    let needs_update = match &camera.viewport {
+        None => true,
+        Some(current) => {
+            current.physical_position != new_vp.physical_position
+                || current.physical_size != new_vp.physical_size
+        }
+    };
+    if needs_update {
+        camera.viewport = Some(new_vp);
+    }
 }
 
 /// Sphere–ray intersection.  Returns the entry distance along the ray

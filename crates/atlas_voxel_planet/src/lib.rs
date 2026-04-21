@@ -51,12 +51,56 @@ pub use wildlife::WildlifePlugin;
 pub use world_io::{SaveWorldRequest, LoadWorldRequest, WorldIoPlugin};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Plugin group
+// Plugin groups
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// All world-building plugins: solar system, planet terrain, atmosphere, and
-/// vegetation.  Does **not** include [`PlayerPlugin`] — add that separately so
-/// the editor can render the world without a first-person controller.
+/// Pure world-simulation plugins: solar system, planet terrain, atmosphere,
+/// vegetation, wildlife, structures, and world I/O.  **Does not** include any
+/// in-game UI / HUD plugins — safe to use in the editor's Editing mode without
+/// pulling gameplay overlays (HUD, minimap, hotbar, crafting panel, dialogue)
+/// on top of the editor panels.
+///
+/// This is the plugin group the Atlas editor uses in `atlas_editor_app`.
+pub struct WorldPlugins;
+
+impl PluginGroup for WorldPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>()
+            .add(solar_system::SolarSystemPlugin)
+            .add(planet::PlanetPlugin)
+            .add(atmosphere::AtmospherePlugin)
+            .add(vegetation::VegetationPlugin)
+            .add(wildlife::WildlifePlugin)
+            .add(structures::StructuresPlugin)
+            .add(world_io::WorldIoPlugin)
+    }
+}
+
+/// Gameplay UI / HUD / interaction plugins: HUD, minimap, inventory/hotbar,
+/// crafting, NPC dialogue, player character model, ambient audio and
+/// multiplayer.  These spawn Bevy UI nodes and register update systems that
+/// only make sense when a [`Player`] entity exists.
+///
+/// Runtime (standalone-game) builds should add both [`WorldPlugins`] and
+/// [`GameplayPlugins`].
+pub struct GameplayPlugins;
+
+impl PluginGroup for GameplayPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>()
+            .add(npc::NpcPlugin)
+            .add(inventory::InventoryPlugin)
+            .add(crafting::CraftingPlugin)
+            .add(character::CharacterPlugin)
+            .add(multiplayer::MultiplayerPlugin)
+            .add(hud::HudPlugin)
+            .add(minimap::MinimapPlugin)
+            .add(ambient_audio::AmbientAudioPlugin)
+    }
+}
+
+/// Backwards-compatible union of [`WorldPlugins`] + [`GameplayPlugins`].
+/// New code should prefer the specific group it needs.
 pub struct VoxelPlanetPlugins;
 
 impl PluginGroup for VoxelPlanetPlugins {

@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use atlas_editor_core::{
-    DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EditorPanelOrder,
+    DeleteEntityRequest, DuplicateEntityRequest, EditorMode, EditorPanelOrder, PanelVisibility,
     PrimitiveKind, RequestEditorMode, SpawnEntityRequest,
 };
 use atlas_editor_scene::{NewSceneRequest, OpenSceneRequest, SaveSceneRequest};
@@ -45,6 +45,24 @@ struct EditorUiState {
     delete_entity_requested: bool,
     /// Set to true by the Edit menu to duplicate the focused entity.
     duplicate_entity_requested: bool,
+    /// Cached snapshot of [`PanelVisibility`] so the menu bar can render ✔
+    /// ticks without pulling the resource into its 16-parameter budget.
+    panel_visibility: PanelVisibility,
+    /// Pending panel-visibility changes from the View menu — applied to the
+    /// actual resource by `dispatch_ui_requests`.
+    pending_panel_toggle: Option<PanelToggle>,
+}
+
+/// One of the seven panels togglable from the View menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelToggle {
+    Outliner,
+    Details,
+    ContentBrowser,
+    OutputLog,
+    WorldSettings,
+    VoxelTools,
+    SnapToolbar,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -135,6 +153,7 @@ fn sync_ui_state(
     mut state:   ResMut<EditorUiState>,
     active_path: Res<ActiveScenePath>,
     dirty:       Res<SceneDirty>,
+    visibility:  Res<PanelVisibility>,
 ) {
     state.undo_label = history.undo_label().map(str::to_owned);
     state.redo_label = history.redo_label().map(str::to_owned);
@@ -145,6 +164,7 @@ fn sync_ui_state(
         .unwrap_or("Untitled")
         .to_owned();
     state.scene_is_dirty = dirty.0;
+    state.panel_visibility = *visibility;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -290,16 +310,35 @@ fn draw_menu_bar(
                 ui.separator();
                 ui.label(egui::RichText::new("Panels").weak().small());
                 ui.separator();
-                if ui.button("Outliner").clicked()         { ui.close_menu(); }
-                if ui.button("Details").clicked()          { ui.close_menu(); }
-                if ui.button("Content Browser").clicked()  { ui.close_menu(); }
-                if ui.button("Output Log").clicked()       { ui.close_menu(); }
-                if ui.button("🌍 World Settings").clicked() { ui.close_menu(); }
+
+                // Helper — render a ✔-prefixed toggle that queues a
+                // PanelToggle for dispatch_ui_requests to apply.
+                let vis = ui_state.panel_visibility;
+                let mut toggle_item = |ui: &mut egui::Ui, visible: bool, label: &str, which: PanelToggle| {
+                    let text = if visible {
+                        format!("✔  {label}")
+                    } else {
+                        format!("      {label}")
+                    };
+                    if ui.button(text).clicked() {
+                        ui_state.pending_panel_toggle = Some(which);
+                        ui.close_menu();
+                    }
+                };
+
+                toggle_item(ui, vis.outliner,        "Outliner",        PanelToggle::Outliner);
+                toggle_item(ui, vis.details,         "Details",         PanelToggle::Details);
+                toggle_item(ui, vis.content_browser, "Content Browser", PanelToggle::ContentBrowser);
+                toggle_item(ui, vis.output_log,      "Output Log",      PanelToggle::OutputLog);
+                toggle_item(ui, vis.world_settings,  "🌍 World Settings", PanelToggle::WorldSettings);
+                toggle_item(ui, vis.voxel_tools,     "🧱 Voxel Tools",    PanelToggle::VoxelTools);
+                toggle_item(ui, vis.snap_toolbar,    "Snap Toolbar",    PanelToggle::SnapToolbar);
+
                 ui.separator();
                 let hist_label = if ui_state.undo_history_visible {
-                    "✔ Undo History"
+                    "✔  Undo History"
                 } else {
-                    "Undo History"
+                    "      Undo History"
                 };
                 if ui.button(hist_label).clicked() {
                     ui_state.undo_history_visible = !ui_state.undo_history_visible;
@@ -363,8 +402,12 @@ fn draw_snap_toolbar(
     mut snap:      ResMut<SnapSettings>,
     mut space:     ResMut<GizmoSpace>,
     mode:          Res<State<EditorMode>>,
+    visibility:    Res<PanelVisibility>,
 ) {
     if *mode.get() != EditorMode::Editing {
+        return;
+    }
+    if !visibility.snap_toolbar {
         return;
     }
 
@@ -542,6 +585,7 @@ fn dispatch_ui_requests(
     focused:      Res<FocusedEntity>,
     mut delete_ev: EventWriter<DeleteEntityRequest>,
     mut dup_ev:   EventWriter<DuplicateEntityRequest>,
+    mut visibility: ResMut<PanelVisibility>,
 ) {
     if ui_state.delete_entity_requested {
         ui_state.delete_entity_requested = false;
@@ -553,6 +597,17 @@ fn dispatch_ui_requests(
         ui_state.duplicate_entity_requested = false;
         if let Some(entity) = focused.0 {
             dup_ev.send(DuplicateEntityRequest(entity));
+        }
+    }
+    if let Some(kind) = ui_state.pending_panel_toggle.take() {
+        match kind {
+            PanelToggle::Outliner       => visibility.outliner        = !visibility.outliner,
+            PanelToggle::Details        => visibility.details         = !visibility.details,
+            PanelToggle::ContentBrowser => visibility.content_browser = !visibility.content_browser,
+            PanelToggle::OutputLog      => visibility.output_log      = !visibility.output_log,
+            PanelToggle::WorldSettings  => visibility.world_settings  = !visibility.world_settings,
+            PanelToggle::VoxelTools     => visibility.voxel_tools     = !visibility.voxel_tools,
+            PanelToggle::SnapToolbar    => visibility.snap_toolbar    = !visibility.snap_toolbar,
         }
     }
 }

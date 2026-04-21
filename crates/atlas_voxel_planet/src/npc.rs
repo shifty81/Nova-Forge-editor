@@ -535,6 +535,7 @@ pub fn setup_dialogue_ui(mut commands: Commands) {
             ..default()
         },
         DialoguePanel,
+        crate::components::GameplayUiRoot,
     )).id();
 
     let name_text = commands.spawn((

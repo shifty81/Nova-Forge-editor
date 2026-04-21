@@ -19,7 +19,7 @@ use atlas_voxel_planet::{
         spawn_voxel_player, toggle_cursor, update_camera_pitch,
         update_chunk_viewpoint_from_player, update_survival_stats,
     },
-    NoiseSeed, Player, PlayerState, PLANET_RADIUS,
+    GameplayUiRoot, NoiseSeed, Player, PlayerState, PLANET_RADIUS,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -82,7 +82,30 @@ impl Plugin for EditorPlayPlugin {
                 Update,
                 draw_pie_hud.run_if(in_state(EditorMode::PlayingInEditor)),
             )
-            .add_systems(Update, (handle_start, handle_stop, handle_pause));
+            .add_systems(Update, (handle_start, handle_stop, handle_pause))
+            // Hide/show gameplay HUD roots based on EditorMode — HUD, minimap,
+            // hotbar, crafting & dialogue panels should only be visible during
+            // PIE, not in the editor where they fight egui panels for z-order.
+            .add_systems(Update, toggle_gameplay_ui_visibility);
+    }
+}
+
+/// Hides all [`GameplayUiRoot`]-marked entities whenever the editor is not
+/// in `PlayingInEditor` mode.  Runs every frame so newly-spawned gameplay UI
+/// (e.g. rebuilt dialogue panels) picks up the correct visibility.
+fn toggle_gameplay_ui_visibility(
+    mode:      Res<State<EditorMode>>,
+    mut roots: Query<&mut Visibility, With<GameplayUiRoot>>,
+) {
+    let desired = if *mode.get() == EditorMode::PlayingInEditor {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut vis in &mut roots {
+        if *vis != desired {
+            *vis = desired;
+        }
     }
 }
 
@@ -97,37 +120,53 @@ fn draw_pie_hud(
 ) {
     let ctx = contexts.ctx_mut();
 
-    // ── Top-left mode banner ─────────────────────────────────────────────────
-    egui::CentralPanel::default().show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("▶  PIE ACTIVE")
-                    .color(egui::Color32::from_rgb(80, 220, 80))
-                    .strong(),
-            );
+    // ── Top-left mode banner (overlay) ───────────────────────────────────────
+    // Transparent CentralPanel so the 3D game world shows through; the banner
+    // is a floating Area with its own background.
+    egui::CentralPanel::default()
+        .frame(egui::Frame::none())
+        .show(ctx, |ui| {
+            let banner_frame = egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(20, 24, 28, 200))
+                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                .rounding(egui::Rounding::same(4.0));
 
-            if let Some(fps) = diagnostics
-                .get(&FrameTimeDiagnosticsPlugin::FPS)
-                .and_then(|d| d.smoothed())
-            {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("{fps:.1} FPS"))
-                        .color(egui::Color32::from_rgb(120, 220, 120)),
-                );
-            }
+            egui::Area::new(egui::Id::new("atlas_pie_banner"))
+                .fixed_pos(ui.max_rect().min + egui::vec2(10.0, 10.0))
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    banner_frame.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("▶  PIE ACTIVE")
+                                    .color(egui::Color32::from_rgb(80, 220, 80))
+                                    .strong(),
+                            );
 
-            ui.separator();
-            ui.label(
-                egui::RichText::new(
-                    "Esc: release cursor · Shift: sprint · Space: jump · F: toggle flight  |  \
-                     Flying: WASD/QE: 6DoF · Shift: fast"
-                )
-                .weak()
-                .small(),
-            );
+                            if let Some(fps) = diagnostics
+                                .get(&FrameTimeDiagnosticsPlugin::FPS)
+                                .and_then(|d| d.smoothed())
+                            {
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new(format!("{fps:.1} FPS"))
+                                        .color(egui::Color32::from_rgb(120, 220, 120)),
+                                );
+                            }
+
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new(
+                                    "Esc: release cursor · Shift: sprint · Space: jump · F: toggle flight  |  \
+                                     Flying: WASD/QE: 6DoF · Shift: fast"
+                                )
+                                .weak()
+                                .small(),
+                            );
+                        });
+                    });
+                });
         });
-    });
 
     // ── Bottom-right player status ───────────────────────────────────────────
     if let Ok((tf, state)) = player_q.get_single() {
