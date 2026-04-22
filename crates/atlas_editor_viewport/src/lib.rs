@@ -455,7 +455,7 @@ fn draw_viewport_panel(
                                     .as_ref()
                                     .and_then(|p| p.file_name())
                                     .and_then(|n| n.to_str())
-                                    .unwrap_or("Nova-Forge");
+                                    .unwrap_or("(unnamed project)");
                                 ui.label(
                                     egui::RichText::new(
                                         format!("Nova-Forge project: {proj_name} — viewport ready for game content"),

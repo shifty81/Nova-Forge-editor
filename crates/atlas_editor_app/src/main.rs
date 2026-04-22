@@ -51,7 +51,7 @@ use atlas_editor_export::EditorExportPlugin;
 /// Returns `true` when the persisted `project/Config/project.ron` in the
 /// current working directory has a `nova_forge_game_path` set.
 fn project_ron_has_nova_forge_link() -> bool {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let Ok(cwd) = std::env::current_dir() else { return false; };
     let path = cwd.join("project/Config/project.ron");
     std::fs::read_to_string(&path)
         .ok()
