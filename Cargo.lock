@@ -578,7 +578,6 @@ dependencies = [
  "atlas_gizmos",
  "atlas_scene",
  "atlas_selection",
- "atlas_voxel_planet",
  "bevy",
  "bevy_egui",
  "rfd",
