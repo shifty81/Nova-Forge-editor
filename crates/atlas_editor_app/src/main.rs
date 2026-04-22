@@ -45,10 +45,13 @@ fn main() {
     // when the directory exists.  Resolve `assets/` to an absolute path and
     // ensure the directory exists before building the App.
     let assets_dir = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .expect("could not determine working directory")
         .join("assets");
     let _ = std::fs::create_dir_all(&assets_dir);
-    let assets_path = assets_dir.to_string_lossy().into_owned();
+    let assets_path = assets_dir
+        .to_str()
+        .expect("assets path contains invalid UTF-8")
+        .to_owned();
 
     App::new()
         // ── Host window ──────────────────────────────────────────────────────
